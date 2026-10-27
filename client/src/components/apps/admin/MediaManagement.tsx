@@ -13,6 +13,10 @@ interface MediaManagementProps {
   onSaved?: () => void | Promise<void>;
 }
 
+interface AdminDraftSaveDetail {
+  register?: (key: string, save: () => Promise<void>) => void;
+}
+
 interface MediaFile {
   id: string;
   name: string;
@@ -224,6 +228,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
 
   const saveResumes = async () => {
     if (resumeSaving) return;
+    if (JSON.stringify(resumes) === JSON.stringify(savedResumes)) return;
     setResumeSaving(true);
     setError('');
     setResumeMessage('');
@@ -270,7 +275,11 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
   saveResumeRef.current = saveResumes;
 
   useEffect(() => {
-    const handleSaveDraft = () => { void saveResumeRef.current(); };
+    const handleSaveDraft = (event: Event) => {
+      const detail = (event as CustomEvent<AdminDraftSaveDetail>).detail;
+      if (detail?.register) detail.register('media', () => saveResumeRef.current());
+      else void saveResumeRef.current();
+    };
     window.addEventListener('admin-save-content-draft', handleSaveDraft);
     return () => {
       window.removeEventListener('admin-save-content-draft', handleSaveDraft);
@@ -475,7 +484,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
     : <div className="min-h-14" aria-hidden="true" />;
 
   return (
-    <div className="w-full min-w-0 max-w-6xl space-y-3 pb-6">
+    <div className="w-full min-w-0 max-w-6xl space-y-3">
       {resumeMessage && <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700">{resumeMessage}</div>}
       <section className="admin-content-card space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">

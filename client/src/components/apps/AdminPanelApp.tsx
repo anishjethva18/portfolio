@@ -54,6 +54,10 @@ type AdminTab =
   | 'security'
   | 'backup';
 
+interface AdminDraftSaveDetail {
+  register?: (key: string, save: () => Promise<void>) => void;
+}
+
 function updateIfChanged<T>(
   setState: React.Dispatch<React.SetStateAction<T>>,
   nextValue: T
@@ -113,12 +117,17 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   const [systemHealth, setSystemHealth] = useState<any>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
-  const [draftDirty, setDraftDirty] = useState(false);
+  const [draftDirtySections, setDraftDirtySections] = useState({
+    portfolio: false,
+    media: false,
+    advanced: false,
+  });
+  const draftDirty = Object.values(draftDirtySections).some(Boolean);
   const [projectFormDirty, setProjectFormDirty] = useState(false);
   const [projectsDirty, setProjectsDirty] = useState(false);
   const [draftSavedAfterChanges, setDraftSavedAfterChanges] = useState(false);
   const pendingProjectDraftIds = useRef<Set<string>>(new Set());
-  const savePendingProjectsRef = useRef<() => void>(() => undefined);
+  const savePendingProjectsRef = useRef<() => Promise<void>>(async () => undefined);
   const [hasUnpublishedDraft, setHasUnpublishedDraft] = useState<boolean | null>(null);
   const [backupStatus, setBackupStatus] = useState<{ latest: any; scheduled: boolean } | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -226,15 +235,18 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
     }
   };
 
-  const reportDraftDirty = (dirty: boolean) => {
-    setDraftDirty(dirty);
+  const reportSectionDirty = useCallback((section: keyof typeof draftDirtySections, dirty: boolean) => {
+    setDraftDirtySections((current) => current[section] === dirty ? current : { ...current, [section]: dirty });
     if (dirty) setDraftSavedAfterChanges(false);
-  };
+  }, []);
 
-  const reportProjectFormDirty = (dirty: boolean) => {
+  const reportPortfolioDirty = useCallback((dirty: boolean) => reportSectionDirty('portfolio', dirty), [reportSectionDirty]);
+  const reportMediaDirty = useCallback((dirty: boolean) => reportSectionDirty('media', dirty), [reportSectionDirty]);
+  const reportAdvancedDirty = useCallback((dirty: boolean) => reportSectionDirty('advanced', dirty), [reportSectionDirty]);
+  const reportProjectFormDirty = useCallback((dirty: boolean) => {
     setProjectFormDirty(dirty);
     if (dirty) setDraftSavedAfterChanges(false);
-  };
+  }, []);
 
   const markCurrentDraftAsSaved = async () => {
     setDraftSavedAfterChanges(await fetchDraftAvailability());
@@ -322,7 +334,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   }, [user, isPanelLocked, sessionPolicy, apiFetch, logout]);
 
   useEffect(() => {
-    if (!user || user.role !== 'admin' || isPanelLocked || !['dashboard', 'analytics'].includes(activeTab)) return;
+    if (!user || user.role !== 'admin' || isPanelLocked) return;
     void fetchAnalytics();
     let refreshTimeoutId: number | undefined;
     const refreshAfterPortfolioActivity = () => {
@@ -334,12 +346,12 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       window.clearTimeout(refreshTimeoutId);
       window.removeEventListener('portfolio-analytics-updated', refreshAfterPortfolioActivity);
     };
-  }, [user?.id, user?.role, isPanelLocked, activeTab, analyticsRecentPage, activityDays]);
+  }, [user?.id, user?.role, isPanelLocked, analyticsRecentPage, activityDays]);
 
   useEffect(() => {
-    if (!user || user.role !== 'admin' || isPanelLocked || activeTab !== 'security') return;
+    if (!user || user.role !== 'admin' || isPanelLocked) return;
     void fetchSystemHealth();
-  }, [user?.id, user?.role, isPanelLocked, activeTab]);
+  }, [user?.id, user?.role, isPanelLocked]);
 
   const toggleAdminTheme = () => {
     setAdminTheme((current) => {
@@ -410,7 +422,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   useEffect(() => {
     const handleDraftRestored = () => {
       pendingProjectDraftIds.current.clear();
-      setDraftDirty(false);
+      setDraftDirtySections({ portfolio: false, media: false, advanced: false });
       setProjectFormDirty(false);
       setProjectsDirty(false);
       setError(null);
@@ -602,10 +614,14 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
     setProjectsDirty(pendingProjectDraftIds.current.size > 0);
     if (allSaved && ids.length) setSuccessMsg('Project changes saved to draft. Publish to apply them to the live Projects app.');
   };
-  savePendingProjectsRef.current = () => { void savePendingProjectChanges(); };
+  savePendingProjectsRef.current = savePendingProjectChanges;
 
   useEffect(() => {
-    const handleSaveDraft = () => savePendingProjectsRef.current();
+    const handleSaveDraft = (event: Event) => {
+      const detail = (event as CustomEvent<AdminDraftSaveDetail>).detail;
+      if (detail?.register) detail.register('project-staging', () => savePendingProjectsRef.current());
+      else void savePendingProjectsRef.current();
+    };
     window.addEventListener('admin-save-content-draft', handleSaveDraft);
     return () => window.removeEventListener('admin-save-content-draft', handleSaveDraft);
   }, []);
@@ -780,7 +796,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       if (!response.ok || !data.success) throw new Error(data.error || 'Portfolio restore failed.');
       setSuccessMsg('Backup restored.');
       pendingProjectDraftIds.current.clear();
-      setDraftDirty(false);
+      setDraftDirtySections({ portfolio: false, media: false, advanced: false });
       setProjectFormDirty(false);
       setProjectsDirty(false);
       window.dispatchEvent(new Event('portfolio-data-updated'));
@@ -907,7 +923,16 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       setActiveTab={(t) => setActiveTab(t as AdminTab)}
       user={user}
       onLogout={handleLogout}
-      onSaveDraft={() => window.dispatchEvent(new Event('admin-save-content-draft'))}
+      onSaveDraft={async () => {
+        const actions = new Map<string, () => Promise<void>>();
+        window.dispatchEvent(new CustomEvent<AdminDraftSaveDetail>('admin-save-content-draft', {
+          detail: { register: (key, save) => actions.set(key, save) },
+        }));
+        for (const key of ['portfolio', 'media', 'advanced', 'project-form', 'project-staging']) {
+          await actions.get(key)?.();
+        }
+        if (actions.size) await markCurrentDraftAsSaved();
+      }}
       onDiscardUnsavedChanges={() => window.dispatchEvent(new Event('admin-discard-unsaved-edits'))}
       canSaveDraft={draftDirty || projectFormDirty || projectsDirty}
       canPublishDraft={Boolean(hasUnpublishedDraft && !draftDirty && !projectFormDirty && !projectsDirty)}
@@ -989,29 +1014,33 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             </div>
           </div>
         )}
-        {activeTab === 'users' && (
+        <div className={activeTab === 'users' ? 'block' : 'hidden'}>
             <UserManagement users={usersList} currentUserId={user.id} onCreate={handleCreateUser} onDelete={handleDeleteUser} onEnable={handleEnableUser} />
-        )}
+        </div>
         <div className={['portfolio', 'appearance', 'seo'].includes(activeTab) ? 'block' : 'hidden'}>
           <PortfolioManagement
             initialSection="profile"
             requestedSection={activeTab === 'appearance' || activeTab === 'seo' ? activeTab : activeTab === 'portfolio' ? 'profile' : undefined}
-            onDraftChange={reportDraftDirty}
+            onDraftChange={reportPortfolioDirty}
             onSaveSuccess={() => { fetchProjects(); void markCurrentDraftAsSaved(); }}
           />
         </div>
-        {activeTab === 'media' && <MediaManagement apiFetch={apiFetch} onDraftChange={reportDraftDirty} onSaved={markCurrentDraftAsSaved} />}
-        {activeTab === 'advanced' && <AdvancedContentManagement apiFetch={apiFetch} onDraftChange={reportDraftDirty} onSaved={markCurrentDraftAsSaved} />}
+        <div className={activeTab === 'media' ? 'block' : 'hidden'}>
+          <MediaManagement apiFetch={apiFetch} onDraftChange={reportMediaDirty} onSaved={markCurrentDraftAsSaved} />
+        </div>
+        <div className={activeTab === 'advanced' ? 'block' : 'hidden'}>
+          <AdvancedContentManagement apiFetch={apiFetch} onDraftChange={reportAdvancedDirty} onSaved={markCurrentDraftAsSaved} />
+        </div>
         <div className={activeTab === 'projects' ? 'block' : 'hidden'}>
           <ProjectManagement projects={projects} loading={projectsLoading} onSave={handleSaveProject} onToggleVisibility={handleToggleProjectVisibility} onDelete={handleDeleteProject} onUploadMedia={(file) => uploadPortfolioMedia(file, 'project')} onReorder={handleReorderProjects} onDraftChange={reportProjectFormDirty} />
         </div>
-        {activeTab === 'contacts' && (
-            <ContactManagement contacts={contactsList} loading={contactsLoading} onRefresh={fetchContacts} onReply={handleReplyToContact} onDelete={handleDeleteContact} />
-        )}
-        {activeTab === 'archives' && (
-            <CameraArchive archives={archivesList} listRef={archiveListRef} page={archivePage} pageSize={archivePageSize} totalItems={archiveTotal} onPageChange={setArchivePage} onDelete={handleDeleteArchive} onDownload={handleDownloadArchive} />
-        )}
-        {activeTab === 'analytics' && (
+        <div className={activeTab === 'contacts' ? 'block' : 'hidden'}>
+          <ContactManagement contacts={contactsList} loading={contactsLoading} onRefresh={fetchContacts} onReply={handleReplyToContact} onDelete={handleDeleteContact} />
+        </div>
+        <div className={activeTab === 'archives' ? 'block' : 'hidden'}>
+          <CameraArchive archives={archivesList} listRef={archiveListRef} page={archivePage} pageSize={archivePageSize} totalItems={archiveTotal} onPageChange={setArchivePage} onDelete={handleDeleteArchive} onDownload={handleDownloadArchive} />
+        </div>
+        <div className={activeTab === 'analytics' ? 'block' : 'hidden'}>
             <AnalyticsDashboard data={analyticsData} theme={adminTheme} activityDays={activityDays} onActivityDaysChange={setActivityDays} onRefresh={fetchAnalytics} onRecentPageChange={setAnalyticsRecentPage} onReset={async () => {
               const response = await apiFetch('/api/analytics/reset', { method: 'DELETE' });
               const result = await response.json();
@@ -1019,12 +1048,13 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
               setSuccessMsg(`Analytics reset. ${result.deletedCount} events removed.`);
               await fetchAnalytics(1);
             }} />
-        )}
-        {activeTab === 'publishing' && (
+        </div>
+        <div className={activeTab === 'publishing' ? 'block' : 'hidden'}>
           <PublishingManagement apiFetch={apiFetch} canPublish={Boolean(hasUnpublishedDraft && !draftDirty && !projectsDirty)} onSuccess={(message) => setSuccessMsg(message)} onError={(message) => setError(message)} onStatusChange={(hasChanges) => { setHasUnpublishedDraft(hasChanges); if (!hasChanges) setDraftSavedAfterChanges(false); }} />
-        )}
-        {activeTab === 'security' && (
+        </div>
+        <div className={activeTab === 'security' ? 'block' : 'hidden'}>
           <SecurityManagement
+            active={activeTab === 'security'}
             onPolicyChange={setSessionPolicy}
             health={systemHealth}
             healthError={healthError}
@@ -1033,8 +1063,8 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             onLogout={handleLogout}
             adminEmail={user.email}
           />
-        )}
-        {activeTab === 'backup' && (
+        </div>
+        <div className={activeTab === 'backup' ? 'block' : 'hidden'}>
             <section className="admin-content-card w-full max-w-3xl space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex items-start gap-3">
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-700"><HardDrive size={19} /></span>
@@ -1097,7 +1127,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
                 </div>
 
             </section>
-        )}
+        </div>
       </div>
     </AdminPanelLayout>
   );

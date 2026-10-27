@@ -30,6 +30,10 @@ interface Project {
     };
 }
 
+interface AdminDraftSaveDetail {
+    register?: (key: string, save: () => Promise<void>) => void;
+}
+
 export const ProjectManagement: React.FC<{
     projects: Project[];
     loading?: boolean;
@@ -108,6 +112,7 @@ export const ProjectManagement: React.FC<{
 
     const saveCurrentDraft = async () => {
         if (saving || !isModalOpen) return;
+        if (initialFormDataRef.current && JSON.stringify(formData) === JSON.stringify(initialFormDataRef.current)) return;
         setSaving(true);
         setFormError('');
         try {
@@ -123,7 +128,11 @@ export const ProjectManagement: React.FC<{
     saveDraftRef.current = saveCurrentDraft;
 
     useEffect(() => {
-        const saveDraft = () => { void saveDraftRef.current(); };
+        const saveDraft = (event: Event) => {
+            const detail = (event as CustomEvent<AdminDraftSaveDetail>).detail;
+            if (detail?.register) detail.register('project-form', () => saveDraftRef.current());
+            else void saveDraftRef.current();
+        };
         const discardUnsavedEdits = () => {
             if (initialFormDataRef.current) setFormData(initialFormDataRef.current);
             setIsModalOpen(false);

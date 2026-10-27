@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 
 interface SecurityManagementProps {
+  active?: boolean;
   onPolicyChange?: (policy: string) => void;
   health?: {
     status: string;
@@ -35,6 +36,7 @@ interface SecurityManagementProps {
 }
 
 export const SecurityManagement: React.FC<SecurityManagementProps> = ({
+  active = true,
   onPolicyChange,
   health = null,
   healthError = null,
@@ -103,11 +105,12 @@ export const SecurityManagement: React.FC<SecurityManagementProps> = ({
   }, [loginHistoryPage, loginHistoryReload]);
 
   useEffect(() => {
+    if (!active) return;
     const intervalId = window.setInterval(() => {
       setLoginHistoryReload((current) => current + 1);
     }, 15_000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (!sessionActionMessage) return;

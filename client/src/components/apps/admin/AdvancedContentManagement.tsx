@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Braces, CloudUpload, LoaderCircle } from 'lucide-react';
+import { mergeAdminDraft } from '../../../utils/mergeAdminDraft';
+
+interface AdminDraftSaveDetail {
+  register?: (key: string, save: () => Promise<void>) => void;
+}
 
 interface AdvancedContentManagementProps {
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
@@ -51,11 +56,19 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
   useEffect(() => { void load(); }, []);
 
   const save = async () => {
+    if (loading || saving || text === savedText) return;
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      const content = JSON.parse(text);
+      const localContent = JSON.parse(text);
+      const baseContent = JSON.parse(savedText);
+      const currentResponse = await apiFetch('/api/admin/content-studio');
+      const currentData = await currentResponse.json();
+      if (!currentResponse.ok || !currentData.success || !currentData.draft) {
+        throw new Error(currentData.error || 'Could not load the latest portfolio draft.');
+      }
+      const content = mergeAdminDraft(baseContent, localContent, currentData.draft);
       const response = await apiFetch('/api/admin/content-studio/draft', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -78,7 +91,11 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
   saveRef.current = save;
 
   useEffect(() => {
-    const handleSaveDraft = () => { void saveRef.current(); };
+    const handleSaveDraft = (event: Event) => {
+      const detail = (event as CustomEvent<AdminDraftSaveDetail>).detail;
+      if (detail?.register) detail.register('advanced', () => saveRef.current());
+      else void saveRef.current();
+    };
     window.addEventListener('admin-save-content-draft', handleSaveDraft);
     return () => {
       window.removeEventListener('admin-save-content-draft', handleSaveDraft);

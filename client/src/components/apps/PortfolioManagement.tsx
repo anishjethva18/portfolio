@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../../utils/apiClient';
 import { uploadPortfolioMedia } from '../../utils/uploadPortfolioMedia';
+import { mergeAdminDraft } from '../../utils/mergeAdminDraft';
 import { getDefaultDesktopWallpaper } from '../../utils/siteAppearance';
 import { useConfirmDialog } from '../../context/ConfirmDialogContext';
 import { SkillBrandIcon } from '../common/SkillBrandIcon';
@@ -55,6 +56,10 @@ interface PortfolioManagementProps {
   requestedSection?: 'profile' | 'appearance' | 'seo';
 }
 
+interface AdminDraftSaveDetail {
+  register?: (key: string, save: () => Promise<void>) => void;
+}
+
 const clonePortfolioContent = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const APPEARANCE_APPS = [...APPS_LIST].sort((left, right) => {
@@ -107,7 +112,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const [hiringStatusOpen, setHiringStatusOpen] = useState(false);
   const [adminShortcut, setAdminShortcut] = useState(getAdminShortcut);
   const [recordingAdminShortcut, setRecordingAdminShortcut] = useState(false);
-  const saveDraftActionRef = useRef<() => void>(() => undefined);
+  const saveDraftActionRef = useRef<() => Promise<void>>(async () => undefined);
 
   useEffect(() => {
     if (requestedSection) setActiveSection(requestedSection);
@@ -273,9 +278,16 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   };
 
   const persistDraft = async () => {
+    const currentResponse = await apiFetch('/api/admin/content-studio');
+    const currentData = await currentResponse.json();
+    if (!currentResponse.ok || !currentData.success || !currentData.draft) {
+      throw new Error(currentData.error || 'Could not load the latest portfolio draft.');
+    }
+    const base = savedDraftContent ?? content;
+    const contentToSave = mergeAdminDraft(base, content, currentData.draft);
     const response = await apiFetch('/api/admin/content-studio/draft', {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content: contentToSave }),
     });
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save portfolio content.');
@@ -283,6 +295,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   };
 
   const handleSaveAll = async () => {
+    if (saving || loading || savedDraftContent === null || JSON.stringify(content) === JSON.stringify(savedDraftContent)) return;
     setSaving(true);
     setSuccessMessage(null);
     setErrorMessage(null);
@@ -300,10 +313,14 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       setSaving(false);
     }
   };
-  saveDraftActionRef.current = () => { void handleSaveAll(); };
+  saveDraftActionRef.current = async () => { await handleSaveAll(); };
 
   useEffect(() => {
-    const handleAdminSaveDraft = () => saveDraftActionRef.current();
+    const handleAdminSaveDraft = (event: Event) => {
+      const detail = (event as CustomEvent<AdminDraftSaveDetail>).detail;
+      if (detail?.register) detail.register('portfolio', () => saveDraftActionRef.current());
+      else void saveDraftActionRef.current();
+    };
     window.addEventListener('admin-save-content-draft', handleAdminSaveDraft);
     return () => window.removeEventListener('admin-save-content-draft', handleAdminSaveDraft);
   }, []);

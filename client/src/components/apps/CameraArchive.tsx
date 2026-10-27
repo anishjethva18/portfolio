@@ -34,9 +34,9 @@ export const CameraArchive: React.FC<{
     const previewUrl = preview ? `/api/admin/archives/${encodeURIComponent(preview.id)}/preview` : null;
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {archives.length === 0
-                ? <div className="grid min-h-56 place-items-center rounded-2xl border border-dashed border-slate-700 bg-[#11141c] p-8 text-center text-sm text-slate-400">No camera captures have been archived yet.</div>
+                ? <div className="grid min-h-32 place-items-center rounded-2xl border border-dashed border-slate-700 bg-[#11141c] p-5 text-center text-sm text-slate-400">No camera captures have been archived yet.</div>
                 : <div ref={listRef} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {archives.map(item => {
                             const timestamp = item.timestamp || item.createdAt;
