@@ -478,7 +478,6 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       if (!res.ok || !data.success) throw new Error(data.error || 'User account could not be deleted.');
       setSuccessMsg('User account deleted.');
       setUsersList((current) => current.filter((user) => user.id !== id));
-      await fetchUsers();
       return true;
     } catch (err: any) {
       setError(err.message || 'User account could not be deleted.');
@@ -511,7 +510,13 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
         return;
       }
       setSuccessMsg('Archive capture permanently purged.');
-      await fetchArchives();
+      setArchivesList((current) => current.filter((archive) => archive.id !== id));
+      const nextTotal = Math.max(0, archiveTotal - 1);
+      setArchiveTotal(nextTotal);
+      setArchivePage((currentPage) => {
+        const nextPageCount = Math.max(1, Math.ceil(nextTotal / archivePageSize));
+        return Math.min(currentPage, nextPageCount);
+      });
     } catch (err: any) {
       setError(err.message);
     }
@@ -640,7 +645,9 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
         return false;
       }
       setSuccessMsg('Project deleted.');
-      await fetchProjects();
+      setProjects((current) => current.filter((project) => project.id !== id));
+      pendingProjectDraftIds.current.delete(id);
+      setProjectsDirty(pendingProjectDraftIds.current.size > 0);
       await fetchDraftAvailability();
       return true;
     } catch (err: any) {
@@ -678,7 +685,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
         return false;
       }
       setSuccessMsg('Contact message deleted.');
-      await fetchContacts();
+      setContactsList((current) => current.filter((contact) => contact.id !== id));
       return true;
     } catch (err: any) {
       setError(err.message || 'Failed to delete contact message.');

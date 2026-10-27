@@ -34,6 +34,22 @@ interface ResumeEntry {
   active: boolean;
 }
 
+const mediaManagementCache: {
+  files: MediaFile[];
+  filesLoaded: boolean;
+  resumes: ResumeEntry[];
+  savedResumes: ResumeEntry[];
+  resumesLoaded: boolean;
+  referencedMediaText: string;
+} = {
+  files: [],
+  filesLoaded: false,
+  resumes: [],
+  savedResumes: [],
+  resumesLoaded: false,
+  referencedMediaText: '',
+};
+
 const MediaThumbnail: React.FC<{
   file: MediaFile;
   onOpen: () => void;
@@ -78,20 +94,21 @@ const MediaThumbnail: React.FC<{
 
 export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDraftChange, onSaved }) => {
   const confirm = useConfirmDialog();
-  const [files, setFiles] = useState<MediaFile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [files, setFiles] = useState<MediaFile[]>(() => mediaManagementCache.files);
+  const [filesLoaded, setFilesLoaded] = useState(() => mediaManagementCache.filesLoaded);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<{ name: string; url: string; extension: string; id?: string } | null>(null);
-  const [resumes, setResumes] = useState<ResumeEntry[]>([]);
-  const [savedResumes, setSavedResumes] = useState<ResumeEntry[]>([]);
-  const [resumeLoading, setResumeLoading] = useState(true);
+  const [resumes, setResumes] = useState<ResumeEntry[]>(() => mediaManagementCache.resumes);
+  const [savedResumes, setSavedResumes] = useState<ResumeEntry[]>(() => mediaManagementCache.savedResumes);
+  const [resumesLoaded, setResumesLoaded] = useState(() => mediaManagementCache.resumesLoaded);
+  const [resumeLoading, setResumeLoading] = useState(() => !mediaManagementCache.resumesLoaded);
   const [resumeSaving, setResumeSaving] = useState(false);
   const [resumeUploadingId, setResumeUploadingId] = useState<string | null>(null);
   const [resumeMessage, setResumeMessage] = useState('');
   const [resumeTargets, setResumeTargets] = useState<Record<string, string>>({});
-  const [referencedMediaText, setReferencedMediaText] = useState('');
+  const [referencedMediaText, setReferencedMediaText] = useState(() => mediaManagementCache.referencedMediaText);
   const [uploadedResumePage, setUploadedResumePage] = useState(1);
   const [mediaPage, setMediaPage] = useState(1);
   const [resumePage, setResumePage] = useState(1);
@@ -134,6 +151,18 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
   }, [resumes, savedResumes, onDraftChange]);
 
   useEffect(() => {
+    mediaManagementCache.files = files;
+    mediaManagementCache.filesLoaded = filesLoaded;
+  }, [files, filesLoaded]);
+
+  useEffect(() => {
+    mediaManagementCache.resumes = resumes;
+    mediaManagementCache.savedResumes = savedResumes;
+    mediaManagementCache.resumesLoaded = resumesLoaded;
+    mediaManagementCache.referencedMediaText = referencedMediaText;
+  }, [resumes, savedResumes, resumesLoaded, referencedMediaText]);
+
+  useEffect(() => {
     setMediaPage((current) => Math.min(current, mediaPageCount));
   }, [mediaPageCount]);
 
@@ -172,6 +201,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
           : [];
       setResumes((current) => JSON.stringify(current) === JSON.stringify(entries) ? current : entries);
       setSavedResumes((current) => JSON.stringify(current) === JSON.stringify(entries) ? current : entries);
+      setResumesLoaded(true);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load resume settings.');
@@ -285,8 +315,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
     }
   };
 
-  const refresh = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+  const refresh = useCallback(async () => {
     try {
       const query = new URLSearchParams({ pathPrefix: MEDIA_FOLDER });
       const response = await apiFetch(`/api/admin/vfs-files?${query}`);
@@ -294,18 +323,17 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not load media files.');
       const nextFiles = data.files || [];
       setFiles((current) => JSON.stringify(current) === JSON.stringify(nextFiles) ? current : nextFiles);
+      setFilesLoaded(true);
       setError('');
     } catch (cause: any) {
       setError(cause.message || 'Media storage is unavailable.');
-    } finally {
-      if (!silent) setLoading(false);
     }
   }, [apiFetch]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
-    const handlePortfolioSync = () => { void refresh(true); };
+    const handlePortfolioSync = () => { void refresh(); };
     window.addEventListener('portfolio-data-updated', handlePortfolioSync);
     return () => window.removeEventListener('portfolio-data-updated', handlePortfolioSync);
   }, [refresh]);
@@ -324,6 +352,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       const response = await apiFetch(`/api/files/${encodeURIComponent(file.id)}`, { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed.');
+      setFiles((current) => current.filter((entry) => entry.id !== file.id));
       setResumes((current) => current.map((resume) => getPortfolioMediaId(resume.file) === file.id ? { ...resume, file: '' } : resume));
       setSavedResumes((current) => current.map((resume) => getPortfolioMediaId(resume.file) === file.id ? { ...resume, file: '' } : resume));
       setReferencedMediaText((current) => current
@@ -334,7 +363,6 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
         : `${file.name} deleted.`);
       window.dispatchEvent(new CustomEvent('portfolio-media-changed'));
       window.dispatchEvent(new Event('portfolio-data-updated'));
-      await refresh();
     } catch (cause: any) {
       setError(cause.message || 'Delete failed.');
     } finally {
@@ -442,30 +470,21 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
         </article>;
       })}
     </div>
-  ) : <div className="px-3 py-9 text-center text-xs text-slate-500">{emptyMessage}</div>;
-
-  const mediaActivityMessage = resumeUploadingId
-    ? 'Uploading resume PDF securely…'
-    : loading && resumeLoading
-      ? 'Loading resume settings and portfolio media…'
-      : resumeLoading
-        ? 'Loading resume settings…'
-        : loading
-          ? 'Refreshing portfolio media…'
-          : '';
+  ) : filesLoaded
+    ? <div className="px-3 py-9 text-center text-xs text-slate-500">{emptyMessage}</div>
+    : <div className="min-h-14" aria-hidden="true" />;
 
   return (
-    <div className="w-full min-w-0 max-w-6xl space-y-3 pb-6" aria-busy={Boolean(mediaActivityMessage)}>
-      {mediaActivityMessage && <div role="status" aria-live="polite" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-medium text-sky-800"><LoaderCircle className="h-4 w-4 animate-spin" />{mediaActivityMessage} Your workspace remains available while this runs.</div>}
+    <div className="w-full min-w-0 max-w-6xl space-y-3 pb-6">
       {resumeMessage && <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700">{resumeMessage}</div>}
       <section className="admin-content-card space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h3 className="text-sm font-semibold text-slate-900">Resume files</h3><p className="mt-1 text-[11px] leading-relaxed text-slate-500">Add role specific PDFs, set which resumes appear in the CV app, and arrange their visitor selection order. Save draft, then publish to make changes live.</p></div>
           <button type="button" onClick={() => { setResumePage(Math.ceil((resumes.length + 1) / resumePageSize)); setResumes((current) => [...current, { id: `resume_${Date.now().toString(36)}`, title: '', file: '', active: false }]); }} disabled={resumeSaving} className="admin-action-button inline-flex h-9 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-[10px] font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Add resume</button>
         </div>
-        {resumes.length === 0 ? (
+        {resumes.length === 0 && resumesLoaded ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-7 text-center text-xs text-slate-500">No resumes configured. Add a resume and upload a PDF or provide a secure media URL.</div>
-        ) : <div ref={configuredResumeListRef} className="space-y-3">
+        ) : resumes.length > 0 ? <div ref={configuredResumeListRef} className="space-y-3">
           {visibleResumes.map((resume, pageIndex) => {
             const index = (currentResumePage - 1) * resumePageSize + pageIndex;
             const resumeMediaId = getPortfolioMediaId(resume.file);
@@ -503,9 +522,9 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
               </div>
             </article>
           );})}
-        </div>}
+        </div> : <div className="min-h-14" aria-hidden="true" />}
         <AdminPagination page={currentResumePage} pageSize={resumePageSize} totalItems={resumes.length} onPageChange={setResumePage} showItemProgress />
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           {JSON.stringify(resumes) !== JSON.stringify(savedResumes) && <p className="text-[10px] text-slate-500">Unsaved resume changes</p>}
           <button type="button" onClick={() => void saveResumes()} disabled={resumeLoading || resumeSaving || JSON.stringify(resumes) === JSON.stringify(savedResumes)} className="admin-action-button inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">{resumeSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{resumeSaving ? 'Saving draft…' : 'Save resume draft'}</button>
         </div>

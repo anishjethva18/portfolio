@@ -385,8 +385,8 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
         await request(`/revisions/${encodeURIComponent(revision.id)}/delete`, { method: 'POST', body: JSON.stringify({}) });
       }
       setExpandedChanges((current) => { const next = { ...current }; delete next[revision.id]; return next; });
+      setRevisions((current) => current.filter((entry) => entry.id !== revision.id));
       onSuccess('Version deleted from history.');
-      await load();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Version could not be deleted.');
     } finally {
