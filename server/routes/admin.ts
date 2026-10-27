@@ -19,7 +19,13 @@ import {
 } from '../models';
 import { CaptureModel } from '../models/Capture';
 import { windowsStorageService } from '../services/windowsStorageService';
-import { backupService, createPortableBackup, verifyBackupIntegrity } from '../services/backupService';
+import {
+  backupService,
+  createPortableBackup,
+  getPortfolioMediaReferenceId,
+  removeUnavailablePortfolioMediaReferences,
+  verifyBackupIntegrity,
+} from '../services/backupService';
 import { isValidBackupBase64 } from '../utils/base64';
 import { requireAdmin, validateCsrf, AuthenticatedRequest } from '../middleware/auth';
 import { sessionService } from '../services/sessionService';
@@ -1100,12 +1106,12 @@ adminRouter.post('/contacts/:id/reply', requireAdmin, async (req: AuthenticatedR
 
 /**
  * POST /api/admin/email/verify
- * Diagnostic verification for SMTP connectivity and authentication credentials
+ * Diagnostic verification for the active email provider and its credentials.
  */
 adminRouter.post('/email/verify', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const result = await emailService.verifySmtpConnection();
-    await recordAudit(req, 'VERIFY_SMTP', 'System', undefined, `SMTP check: ${result.message}`);
+    await recordAudit(req, 'VERIFY_EMAIL_PROVIDER', 'System', undefined, `Email provider check: ${result.message}`);
     res.json({ success: result.connected, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -2089,19 +2095,41 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
         restoredMedia.set(`/api/portfolio-media/${sourceId}`, restoredUrl);
       }
 
-      const publishedContent = replaceBackupMediaReferences(collections.publishedContent, restoredMedia);
-      const draftContent = replaceBackupMediaReferences(collections.draftContent, restoredMedia);
-      const restoredProjects = replaceBackupMediaReferences(projects, restoredMedia) as any[];
-      const restoredDraftProjects = replaceBackupMediaReferences(draftProjects, restoredMedia) as any[];
+      const restoredMediaIds = new Set(
+        Array.from(restoredMedia.values())
+          .map(getPortfolioMediaReferenceId)
+          .filter((id): id is string => Boolean(id))
+      );
+      const mediaWarnings = new Set<string>();
+      const sanitizeRestoredReferences = <T>(value: T): T => {
+        const sanitized = removeUnavailablePortfolioMediaReferences(value, restoredMediaIds);
+        for (const id of sanitized.missingIds) {
+          mediaWarnings.add(`Portfolio media ${id} was unavailable and its broken reference was removed during restore.`);
+        }
+        return sanitized.value;
+      };
+      const publishedContent = sanitizeRestoredReferences(
+        replaceBackupMediaReferences(collections.publishedContent, restoredMedia)
+      );
+      const draftContent = sanitizeRestoredReferences(
+        replaceBackupMediaReferences(collections.draftContent, restoredMedia)
+      );
+      const restoredProjects = sanitizeRestoredReferences(
+        replaceBackupMediaReferences(projects, restoredMedia) as any[]
+      );
+      const restoredDraftProjects = sanitizeRestoredReferences(
+        replaceBackupMediaReferences(draftProjects, restoredMedia) as any[]
+      );
       const restoredContentRevisions = fullRestore
         ? collections.contentRevisions.map((revision: any) => replaceBackupMediaReferences(revision, restoredMedia))
         : [];
+      const sanitizedRevisions = sanitizeRestoredReferences(restoredContentRevisions);
       const allMediaReferences = [
         publishedContent,
         draftContent,
         restoredProjects,
         restoredDraftProjects,
-        restoredContentRevisions,
+        sanitizedRevisions,
       ];
       for (const value of allMediaReferences) {
         const references = collectBackupMediaReferences(value);
@@ -2150,7 +2178,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
         db.analytics.splice(0, db.analytics.length, ...analytics as any[]);
         restoredAnalyticsCount = analytics.length;
 
-        const revisions = restoredContentRevisions.map((revision: any) => {
+        const revisions = sanitizedRevisions.map((revision: any) => {
           const { _id: _revisionId, __v: _revisionVersion, ...portableRevision } = revision;
           return portableRevision;
         });
@@ -2186,6 +2214,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
       res.json({
         success: true,
         message: 'Portfolio backup restored successfully.',
+        ...(mediaWarnings.size ? { warnings: Array.from(mediaWarnings) } : {}),
         restored: {
           projects: projects.length,
           media: createdMediaIds.length,

@@ -121,6 +121,8 @@ export const WidgetsBoard: React.FC = () => {
   const [showCitySearch, setShowCitySearch] = useState(false);
   const [quickNote, setQuickNote] = useState('Build transformative agentic software.');
   const [isSavedNote, setIsSavedNote] = useState(false);
+  const [extraQuickNote, setExtraQuickNote] = useState('');
+  const [isSavedExtraNote, setIsSavedExtraNote] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const refreshWeather = async (
@@ -445,41 +447,55 @@ export const WidgetsBoard: React.FC = () => {
             )}
           </div>
 
-          {/* Quick Scratchpad / Goals */}
-          <div className={`widgets-board-card p-4 rounded-2xl border space-y-2 flex flex-col justify-between ${isLight ? 'border-slate-200 bg-white' : 'bg-[#202025] border-white/10'}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bookmark className="w-4 h-4 text-cyan-400" />
-                <span className={`font-bold text-xs ${isLight ? 'text-slate-900' : 'text-white'}`}>Daily Focus & Quick Notes</span>
+          <div className="grid content-start gap-4">
+            {/* Quick Scratchpad / Goals */}
+            <div className={`widgets-board-card p-4 rounded-2xl border flex flex-col gap-3 ${isLight ? 'border-slate-200 bg-white' : 'bg-[#202025] border-white/10'}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bookmark className="w-4 h-4 text-cyan-400" />
+                  <span className={`font-bold text-xs ${isLight ? 'text-slate-900' : 'text-white'}`}>Daily Focus & Quick Notes</span>
+                </div>
+                {(isSavedNote || isSavedExtraNote) && (
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Saved</span>
+                  </span>
+                )}
               </div>
-              {isSavedNote && (
-                <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>Saved</span>
-                </span>
-              )}
-            </div>
 
-            <textarea
-              value={quickNote}
-              onChange={(e) => {
-                setQuickNote(e.target.value);
-                setIsSavedNote(true);
-                setTimeout(() => setIsSavedNote(false), 1500);
-              }}
-              rows={3}
-              className={`w-full p-2.5 rounded-xl border text-xs placeholder-slate-500 focus:outline-none focus:border-cyan-400 resize-none font-sans ${isLight ? 'widgets-board-note bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/40 border-white/10 text-slate-200'}`}
-              placeholder="Jot down quick thoughts or ideas..."
-            />
+              <textarea
+                value={quickNote}
+                onChange={(e) => {
+                  setQuickNote(e.target.value);
+                  setIsSavedNote(true);
+                  setTimeout(() => setIsSavedNote(false), 1500);
+                }}
+                rows={2}
+                className={`w-full min-h-12 p-2.5 rounded-xl border text-xs placeholder-slate-500 focus:outline-none focus:border-cyan-400 resize-none font-sans ${isLight ? 'widgets-board-note bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/40 border-white/10 text-slate-200'}`}
+                placeholder="Jot down quick thoughts or ideas..."
+              />
 
-            <div className={`flex items-center justify-between text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-              <span>Goal: Transformative software</span>
-              <button
-                onClick={() => openApp('notepad', { fileContent: quickNote })}
-                className="text-cyan-400 hover:underline text-[10px] cursor-pointer"
-              >
-                Open in Notepad
-              </button>
+              <textarea
+                value={extraQuickNote}
+                onChange={(e) => {
+                  setExtraQuickNote(e.target.value);
+                  setIsSavedExtraNote(true);
+                  setTimeout(() => setIsSavedExtraNote(false), 1500);
+                }}
+                rows={3}
+                className={`w-full min-h-24 p-2.5 rounded-xl border text-xs placeholder-slate-500 focus:outline-none focus:border-cyan-400 resize-none font-sans ${isLight ? 'widgets-board-note bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/40 border-white/10 text-slate-200'}`}
+                placeholder="Add another focus or note..."
+              />
+
+              <div className={`flex items-center justify-between text-[11px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                <span>Goal: Transformative software</span>
+                <button
+                  onClick={() => openApp('notepad', { fileContent: [quickNote, extraQuickNote].filter(Boolean).join('\n\n') })}
+                  className="text-cyan-400 hover:underline text-[10px] cursor-pointer"
+                >
+                  Open in Notepad
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -269,8 +269,12 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   useEffect(() => {
     if (!user || user.role !== 'admin' || isPanelLocked || sessionPolicy !== 'timeout_15m') return;
 
+    let lastActivityAt = Date.now();
+    let lastHeartbeatActivityAt = lastActivityAt;
+    let heartbeatInProgress = false;
     let timeoutId = window.setTimeout(lockPanel, 15 * 60 * 1000);
     const resetTimeout = () => {
+      lastActivityAt = Date.now();
       window.clearTimeout(timeoutId);
       timeoutId = window.setTimeout(lockPanel, 15 * 60 * 1000);
     };
@@ -279,13 +283,43 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       setIsPanelLocked(true);
     }
 
-    const activityEvents: Array<keyof DocumentEventMap> = ['pointerdown', 'pointermove', 'keydown', 'touchstart'];
+    const activityEvents: Array<keyof DocumentEventMap> = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel', 'scroll'];
     activityEvents.forEach((eventName) => document.addEventListener(eventName, resetTimeout, { passive: true }));
+    const heartbeatId = window.setInterval(async () => {
+      if (
+        document.visibilityState === 'hidden' ||
+        heartbeatInProgress ||
+        lastActivityAt <= lastHeartbeatActivityAt
+      ) return;
+
+      heartbeatInProgress = true;
+      try {
+        const response = await apiFetch('/api/auth/me');
+        if (response.status === 401) {
+          try {
+            await logout();
+          } catch (logoutError) {
+            console.error('[AdminPanel] Could not clear an expired administrator session.', logoutError);
+            sessionStorage.setItem('win11_admin_panel_locked', 'true');
+            setIsPanelLocked(true);
+          }
+          return;
+        }
+        if (!response.ok) throw new Error(`Session heartbeat failed (HTTP ${response.status}).`);
+        lastHeartbeatActivityAt = lastActivityAt;
+      } catch (heartbeatError) {
+        console.error('[AdminPanel] Could not renew the active administrator session.', heartbeatError);
+        lastHeartbeatActivityAt = lastActivityAt;
+      } finally {
+        heartbeatInProgress = false;
+      }
+    }, 60 * 1000);
     return () => {
       window.clearTimeout(timeoutId);
+      window.clearInterval(heartbeatId);
       activityEvents.forEach((eventName) => document.removeEventListener(eventName, resetTimeout));
     };
-  }, [user, isPanelLocked, sessionPolicy]);
+  }, [user, isPanelLocked, sessionPolicy, apiFetch, logout]);
 
   useEffect(() => {
     if (!user || user.role !== 'admin' || isPanelLocked || !['dashboard', 'analytics'].includes(activeTab)) return;
@@ -690,7 +724,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
         link.download = fileName;
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-        setSuccessMsg(`Full backup downloaded as ${fileName}.`);
+        setSuccessMsg('Backup created.');
         await fetchBackupStatus();
       } else {
         setError(data.error || 'Backup failed.');
@@ -715,6 +749,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       link.download = backupStatus?.latest?.fileName || 'portfolio-backup.json';
       link.click();
       URL.revokeObjectURL(downloadUrl);
+      setSuccessMsg('Backup downloaded.');
     } catch (err: any) {
       setError(err.message || 'Backup download failed.');
     }
@@ -736,7 +771,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Portfolio restore failed.');
-      setSuccessMsg(data.message || 'Portfolio restored.');
+      setSuccessMsg('Backup restored.');
       pendingProjectDraftIds.current.clear();
       setDraftDirty(false);
       setProjectFormDirty(false);

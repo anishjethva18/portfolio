@@ -13,7 +13,13 @@ import { emailService } from '../services/emailService';
 import { sessionService } from '../services/sessionService';
 import { contentStudioService } from '../services/contentStudioService';
 import { fileService } from '../services/fileService';
-import { ContactModel, UserModel, FileMetadataModel } from '../models';
+import {
+  AdminContentDraftModel,
+  ContactModel,
+  FileMetadataModel,
+  SiteContentModel,
+  UserModel,
+} from '../models';
 
 async function runComprehensiveTests() {
   console.log('=================================================================');
@@ -168,6 +174,52 @@ async function runComprehensiveTests() {
     );
     generatedBackupPaths.add(fullBackupResult.filePath);
 
+    const originalPublishedDocument = await SiteContentModel.findOne({ key: 'primary_portfolio_content' }).lean();
+    const originalContentSnapshot = await contentStudioService.getSnapshot(fallbackContent);
+    const originalPublishedAvatar = (originalContentSnapshot.published.profile as Record<string, unknown> | undefined)?.avatar;
+    const originalDraftAvatar = (originalContentSnapshot.draft.profile as Record<string, unknown> | undefined)?.avatar;
+    const missingMediaUrl = '/api/portfolio-media/file-missing-from-storage';
+    try {
+      await SiteContentModel.updateOne(
+        { key: 'primary_portfolio_content' },
+        { $set: { 'profile.avatar': missingMediaUrl } },
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+      await AdminContentDraftModel.updateOne(
+        { key: 'primary_portfolio_content' },
+        { $set: { 'content.profile.avatar': missingMediaUrl } }
+      );
+      const staleReferenceSnapshot = await backupService.createSnapshot('full-portfolio-assets', fallbackContent);
+      assert(
+        staleReferenceSnapshot.metadata.warnings?.length === 1 &&
+        (staleReferenceSnapshot.collections.publishedContent.profile as any).avatar === '' &&
+        (staleReferenceSnapshot.collections.draftContent.profile as any).avatar === '',
+        'Full backup preserves portfolio data while reporting and removing stale media references',
+        JSON.stringify({
+          warningCount: staleReferenceSnapshot.metadata.warnings?.length,
+          publishedAvatar: (staleReferenceSnapshot.collections.publishedContent.profile as any).avatar,
+          draftAvatar: (staleReferenceSnapshot.collections.draftContent.profile as any).avatar,
+        })
+      );
+    } finally {
+      if (originalPublishedDocument) {
+        await SiteContentModel.updateOne(
+          { key: 'primary_portfolio_content' },
+          originalPublishedAvatar === undefined
+            ? { $unset: { 'profile.avatar': 1 } }
+            : { $set: { 'profile.avatar': originalPublishedAvatar } }
+        );
+      } else {
+        await SiteContentModel.deleteOne({ key: 'primary_portfolio_content' });
+      }
+      await AdminContentDraftModel.updateOne(
+        { key: 'primary_portfolio_content' },
+        originalDraftAvatar === undefined
+          ? { $unset: { 'content.profile.avatar': 1 } }
+          : { $set: { 'content.profile.avatar': originalDraftAvatar } }
+      );
+    }
+
     // C. Verify /api/admin/backup/run with { type: 'full' }
     const runRes = await fetch(`${baseUrl}/api/admin/backup/run`, {
       method: 'POST',
@@ -246,48 +298,72 @@ async function runComprehensiveTests() {
     // -------------------------------------------------------------
     // 2. SMTP LIVE EMAIL DELIVERY VERIFICATION
     // -------------------------------------------------------------
-    console.log('\n--- 2. SMTP Live Email Delivery Verification ---');
+    console.log('\n--- 2. Email Provider Delivery Verification ---');
+    const originalEmailEnvironment = {
+      provider: process.env.EMAIL_PROVIDER,
+      resendApiKey: process.env.RESEND_API_KEY,
+      resendFrom: process.env.RESEND_FROM,
+    };
+    const originalFetch = globalThis.fetch;
+    process.env.EMAIL_PROVIDER = 'resend';
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.RESEND_FROM = 'Portfolio Test <test@example.test>';
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.resend.com/domains') {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (url === 'https://api.resend.com/emails' && init?.method === 'POST') {
+        return new Response(JSON.stringify({ id: `test-email-${Date.now()}` }), { status: 200 });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    try {
+      const verifyResult = await emailService.verifySmtpConnection();
+      assert(
+        typeof verifyResult.configured === 'boolean' &&
+        typeof verifyResult.message === 'string',
+        'emailService.verifySmtpConnection returns structured provider diagnostic'
+      );
 
-    // A. Verify SMTP connection check method
-    const verifyResult = await emailService.verifySmtpConnection();
-    assert(
-      typeof verifyResult.configured === 'boolean' &&
-      typeof verifyResult.message === 'string',
-      'emailService.verifySmtpConnection returns structured connectivity diagnostic'
-    );
+      const testSendResult = await emailService.sendTestEmail('verify_recipient@test.local');
+      assert(
+        testSendResult.success &&
+        Boolean(testSendResult.messageId) &&
+        Boolean(testSendResult.timestamp) &&
+        ['smtp', 'resend', 'gmail_api', 'test_account', 'simulated'].includes(testSendResult.deliveryMode),
+        `emailService.sendTestEmail successfully executes delivery pipeline (mode: ${testSendResult.deliveryMode})`
+      );
 
-    // B. Verify live test email dispatch
-    const testSendResult = await emailService.sendTestEmail('verify_recipient@test.local');
-    assert(
-      testSendResult.success &&
-      Boolean(testSendResult.messageId) &&
-      Boolean(testSendResult.timestamp) &&
-      ['smtp', 'test_account', 'simulated'].includes(testSendResult.deliveryMode),
-      `emailService.sendTestEmail successfully executes delivery pipeline (mode: ${testSendResult.deliveryMode})`
-    );
+      const apiVerifyRes = await fetch(`${baseUrl}/api/admin/email/verify`, {
+        method: 'POST',
+        headers: adminHeaders,
+      });
+      const apiVerifyData = await apiVerifyRes.json() as any;
+      assert(
+        apiVerifyRes.ok && typeof apiVerifyData.configured === 'boolean',
+        'Protected Admin API POST /api/admin/email/verify responds with diagnostic status'
+      );
 
-    // C. Verify admin API POST /api/admin/email/verify
-    const apiVerifyRes = await fetch(`${baseUrl}/api/admin/email/verify`, {
-      method: 'POST',
-      headers: adminHeaders,
-    });
-    const apiVerifyData = await apiVerifyRes.json() as any;
-    assert(
-      apiVerifyRes.ok && typeof apiVerifyData.configured === 'boolean',
-      'Protected Admin API /api/admin/email/verify responds with diagnostic status'
-    );
-
-    // D. Verify admin API POST /api/admin/email/test-send
-    const apiSendRes = await fetch(`${baseUrl}/api/admin/email/test-send`, {
-      method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ recipient: 'admin_test@test.local' }),
-    });
-    const apiSendData = await apiSendRes.json() as any;
-    assert(
-      apiSendRes.ok && apiSendData.success && Boolean(apiSendData.result.messageId),
-      'Protected Admin API /api/admin/email/test-send dispatches live test email with receipt ID'
-    );
+      const apiSendRes = await fetch(`${baseUrl}/api/admin/email/test-send`, {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ recipient: 'admin_test@test.local' }),
+      });
+      const apiSendData = await apiSendRes.json() as any;
+      assert(
+        apiSendRes.ok && apiSendData.success && Boolean(apiSendData.result.messageId),
+        'Protected Admin API POST /api/admin/email/test-send dispatches a test email with receipt ID'
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalEmailEnvironment.provider === undefined) delete process.env.EMAIL_PROVIDER;
+      else process.env.EMAIL_PROVIDER = originalEmailEnvironment.provider;
+      if (originalEmailEnvironment.resendApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalEmailEnvironment.resendApiKey;
+      if (originalEmailEnvironment.resendFrom === undefined) delete process.env.RESEND_FROM;
+      else process.env.RESEND_FROM = originalEmailEnvironment.resendFrom;
+    }
 
     // -------------------------------------------------------------
     // 3. MONITORING PERIODIC LIVE POLLING VERIFICATION

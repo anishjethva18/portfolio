@@ -1,25 +1,21 @@
 export type EmailProvider = 'resend' | 'gmail_oauth' | 'gmail_smtp' | 'smtp' | 'dev_mock';
 
-export type SmtpAuthentication =
-  | { user: string; pass: string }
-  | {
-      type: 'OAuth2';
-      user: string;
-      clientId: string;
-      clientSecret: string;
-      refreshToken: string;
-      accessToken?: string;
-    };
-
 export interface EmailConfig {
   provider: EmailProvider;
   receiverEmail: string;
   fromEmail: string;
+  googleOAuth?: {
+    user: string;
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+    accessToken?: string;
+  };
   smtp?: {
     host: string;
     port: number;
     secure: boolean;
-    auth: SmtpAuthentication;
+    auth: { user: string; pass: string };
   };
   resend?: { apiKey: string };
   diagnosticDetails?: {
@@ -72,7 +68,6 @@ export const getEmailConfig = (env: NodeJS.ProcessEnv = process.env): EmailConfi
   const oauthClientId = firstEnv(env.GOOGLE_OAUTH_CLIENT_ID, env.GOOGLE_CLIENT_ID, env.GMAIL_OAUTH_CLIENT_ID, env.GMAIL_CLIENT_ID);
   const oauthClientSecret = firstEnv(env.GOOGLE_OAUTH_CLIENT_SECRET, env.GOOGLE_CLIENT_SECRET, env.GMAIL_OAUTH_CLIENT_SECRET, env.GMAIL_CLIENT_SECRET);
   const oauthRefreshToken = firstEnv(env.GOOGLE_OAUTH_REFRESH_TOKEN, env.GOOGLE_REFRESH_TOKEN, env.GMAIL_OAUTH_REFRESH_TOKEN, env.GMAIL_REFRESH_TOKEN);
-  const oauthAccessToken = firstEnv(env.GOOGLE_OAUTH_ACCESS_TOKEN, env.GMAIL_ACCESS_TOKEN);
   const hasGoogleOAuth = Boolean(smtpUser && oauthClientId && oauthClientSecret && oauthRefreshToken);
   const hasSmtp = Boolean(smtpHost && smtpUser && smtpPass && Number.isInteger(port) && port > 0 && port <= 65535);
   const requestedProvider = firstEnv(env.EMAIL_PROVIDER).toLowerCase().replace(/[-\s]/g, '_');
@@ -101,21 +96,17 @@ export const getEmailConfig = (env: NodeJS.ProcessEnv = process.env): EmailConfi
         : hasSmtp
           ? isGmail ? 'gmail_smtp' : 'smtp'
           : 'dev_mock';
-  const isOAuth = provider === 'gmail_oauth';
-  const activeSmtp = provider === 'gmail_oauth' || provider === 'gmail_smtp' || provider === 'smtp';
-  const auth: SmtpAuthentication | undefined = isOAuth
+  const activeSmtp = provider === 'gmail_smtp' || provider === 'smtp';
+  const googleOAuth = provider === 'gmail_oauth'
     ? {
-        type: 'OAuth2',
         user: smtpUser,
         clientId: oauthClientId,
         clientSecret: oauthClientSecret,
         refreshToken: oauthRefreshToken,
-        ...(oauthAccessToken ? { accessToken: oauthAccessToken } : {}),
       }
-    : activeSmtp
-      ? { user: smtpUser, pass: smtpPass }
-      : undefined;
-  const selectedHost = provider === 'gmail_oauth' || provider === 'gmail_smtp' ? 'smtp.gmail.com' : smtpHost;
+    : undefined;
+  const smtpAuth = activeSmtp ? { user: smtpUser, pass: smtpPass } : undefined;
+  const selectedHost = provider === 'gmail_smtp' ? 'smtp.gmail.com' : smtpHost;
   const defaultFrom = smtpUser || receiverEmail;
   const providerName = provider === 'resend'
     ? 'Resend API'
@@ -128,7 +119,9 @@ export const getEmailConfig = (env: NodeJS.ProcessEnv = process.env): EmailConfi
           : 'Dev/Mock Store';
   const fromEmail = provider === 'resend'
     ? firstEnv(env.RESEND_FROM, env.EMAIL_FROM, env.SMTP_FROM) || 'Portfolio Contact <onboarding@resend.dev>'
-    : customFrom || `Portfolio Contact <${defaultFrom}>`;
+    : provider === 'gmail_oauth'
+      ? firstEnv(env.EMAIL_FROM) || `Portfolio Contact <${smtpUser}>`
+      : customFrom || `Portfolio Contact <${defaultFrom}>`;
   const reason = provider === 'dev_mock'
     ? requested
       ? `EMAIL_PROVIDER requested ${requestedProvider}, but its required credentials are missing.`
@@ -139,14 +132,22 @@ export const getEmailConfig = (env: NodeJS.ProcessEnv = process.env): EmailConfi
     provider,
     receiverEmail,
     fromEmail,
+    ...(googleOAuth ? {
+      googleOAuth: {
+        user: googleOAuth.user,
+        clientId: googleOAuth.clientId,
+        clientSecret: googleOAuth.clientSecret,
+        refreshToken: googleOAuth.refreshToken,
+      },
+    } : {}),
     ...(provider === 'resend' ? { resend: { apiKey: resendApiKey } } : {}),
-    ...(activeSmtp && auth
+    ...(activeSmtp && smtpAuth
       ? {
           smtp: {
             host: selectedHost,
             port,
             secure,
-            auth,
+            auth: smtpAuth,
           },
         }
       : {}),
@@ -154,11 +155,11 @@ export const getEmailConfig = (env: NodeJS.ProcessEnv = process.env): EmailConfi
       hasSmtpConfig: hasSmtp,
       hasResendConfig: Boolean(resendApiKey),
       hasGoogleOAuthConfig: hasGoogleOAuth,
-      smtpHost: selectedHost || undefined,
-      smtpPort: port,
+      smtpHost: activeSmtp ? selectedHost || undefined : undefined,
+      smtpPort: activeSmtp ? port : undefined,
       smtpUser: smtpUser || undefined,
       hasSmtpPass: Boolean(smtpPass),
-      isSecure: isOAuth ? false : secure,
+      isSecure: activeSmtp ? secure : undefined,
       isGmail: provider === 'gmail_oauth' || provider === 'gmail_smtp',
       detectedProvider: providerName,
       reason,

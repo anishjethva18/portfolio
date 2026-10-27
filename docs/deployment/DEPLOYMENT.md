@@ -326,15 +326,14 @@ live email provider configuration.
 | `GEMINI_API_KEY` | Enables Gemini Google Search grounding in the browse/search feature. If absent or unavailable, search falls back; it is not required for the core site. | Render | **Yes** | `<GEMINI_API_KEY>` |
 | `EMAIL_PROVIDER` | Optional explicit selector: `resend`, `gmail_oauth` (`google_oauth` is an alias), `gmail_smtp`, or `smtp`. If unset, code selects the first complete provider in its documented priority order. | Render | No | `resend` |
 | `CONTACT_RECEIVER_EMAIL` | Inbox for contact notifications; `RECEIVER_EMAIL` is an accepted alias. Set explicitly rather than relying on the code fallback. | Render | No | `<CONTACT_INBOX>` |
-| `EMAIL_FROM` | Optional sender identity for SMTP; `SMTP_FROM` is an accepted alias. Resend uses `RESEND_FROM` first, then this value. Use a sender allowed by the selected provider. | Render | Usually no | `Portfolio Contact <verified@your-domain.example>` |
+| `EMAIL_FROM` | Optional sender identity for Gmail OAuth/SMTP; for Gmail it must be the authenticated account or a configured Gmail send-as address. Resend uses `RESEND_FROM` first. | Render | Usually no | `Portfolio Contact <verified@your-domain.example>` |
 | `EMAIL_PUBLIC_BASE_URL` | Optional public API origin override for email images/links. The service can use Render's external URL when available. | Render | No | `https://<YOUR_API>.onrender.com` |
 | `RESEND_API_KEY` | Resend API credential. Resend is selected automatically before OAuth/SMTP when this is configured and `EMAIL_PROVIDER` is unset. | Render | **Yes** | `<RESEND_API_KEY>` |
 | `RESEND_FROM` | Sender address/name for Resend; its domain/address must be verified with Resend. | Render | No | `Portfolio <verified@your-domain.example>` |
 | `GMAIL_USER` | Gmail account used with OAuth2 or Gmail SMTP; `EMAIL_USER`, `SMTP_USER`, `GOOGLE_OAUTH_EMAIL`, and `GOOGLE_EMAIL` are also accepted account names. | Render | No | `<YOUR_GMAIL_ADDRESS>` |
-| `GOOGLE_OAUTH_CLIENT_ID` | OAuth client identifier for Gmail SMTP OAuth2; aliases include `GOOGLE_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_ID`, and `GMAIL_CLIENT_ID`. | Render | Treat as sensitive | `<GOOGLE_OAUTH_CLIENT_ID>` |
+| `GOOGLE_OAUTH_CLIENT_ID` | OAuth client identifier for Gmail API; aliases include `GOOGLE_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_ID`, and `GMAIL_CLIENT_ID`. | Render | Treat as sensitive | `<GOOGLE_OAUTH_CLIENT_ID>` |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth client secret; aliases include `GOOGLE_CLIENT_SECRET`, `GMAIL_OAUTH_CLIENT_SECRET`, and `GMAIL_CLIENT_SECRET`. | Render | **Yes** | `<GOOGLE_OAUTH_CLIENT_SECRET>` |
-| `GOOGLE_OAUTH_REFRESH_TOKEN` | OAuth refresh token required by the Gmail OAuth2 transport; aliases include `GOOGLE_REFRESH_TOKEN`, `GMAIL_OAUTH_REFRESH_TOKEN`, and `GMAIL_REFRESH_TOKEN`. Grant the `https://mail.google.com/` scope. | Render | **Yes** | `<GOOGLE_OAUTH_REFRESH_TOKEN>` |
-| `GOOGLE_OAUTH_ACCESS_TOKEN` | Optional current access token; `GMAIL_ACCESS_TOKEN` is an alias and the refresh token is preferred. | Render | **Yes** | `<SHORT_LIVED_ACCESS_TOKEN>` |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | Refresh token required by Gmail API OAuth; aliases include `GOOGLE_REFRESH_TOKEN`, `GMAIL_OAUTH_REFRESH_TOKEN`, and `GMAIL_REFRESH_TOKEN`. Grant `gmail.send` and `gmail.metadata` scopes. | Render | **Yes** | `<GOOGLE_OAUTH_REFRESH_TOKEN>` |
 | `EMAIL_HOST` | SMTP hostname; `SMTP_HOST` is an alias. Gmail defaults to `smtp.gmail.com` when an account is supplied. | Render | No | `smtp.gmail.com` |
 | `EMAIL_PORT` | SMTP port; `SMTP_PORT` is an alias. Use the provider's documented TLS mode; typical values are `465` or `587`. | Render | No | `587` |
 | `EMAIL_SECURE` | SMTP TLS setting; `SMTP_SECURE` is an alias. Normally `true` for implicit TLS on 465 and `false` for STARTTLS on 587. | Render | No | `false` |
@@ -414,25 +413,34 @@ based on these actual implemented transports:
 
 1. **Resend API:** uses Node's built-in `fetch` to call the Resend HTTPS API;
    the server does not need the Resend npm SDK.
-2. **Gmail OAuth2 SMTP:** uses Nodemailer OAuth2; requires a Gmail user,
-   client ID, client secret, and refresh token with the
-   `https://mail.google.com/` scope.
+2. **Gmail OAuth2 API:** exchanges a refresh token for an access token and sends
+   through the Gmail HTTPS API; it does not open an SMTP connection. Configure
+   `GMAIL_USER`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
+   `GOOGLE_OAUTH_REFRESH_TOKEN`. Enable the Gmail API in the Google Cloud
+   project and grant the OAuth client the
+   `https://www.googleapis.com/auth/gmail.send` and
+   `https://www.googleapis.com/auth/gmail.metadata` scopes. The metadata
+   permission is used only by the admin connection check to confirm the Gmail
+   account; message delivery uses the send scope.
 3. **Gmail SMTP:** uses Nodemailer and a Google App Password, not a normal
    account password.
 4. **Generic SMTP:** uses Nodemailer with the configured host, port, TLS mode,
    username, and password.
 
 If `EMAIL_PROVIDER` is unset, automatic selection prefers Resend, then Gmail
-OAuth2, then Gmail SMTP, then generic SMTP. Setting `EMAIL_PROVIDER` explicitly
-requires that provider's credentials. A delivery error does not mean the
-service will silently switch to a different configured provider.
+OAuth2 API, then Gmail SMTP, then generic SMTP. Set `EMAIL_PROVIDER=google_oauth`
+or `EMAIL_PROVIDER=gmail_oauth` to force the HTTPS Gmail API even if old SMTP
+variables remain configured. Setting `EMAIL_PROVIDER` explicitly requires that
+provider's credentials. A delivery error does not mean the service will
+silently switch to a different configured provider.
 
 For production, verify the sender/domain with the provider and set a monitored
 recipient inbox. For Resend, use a verified sender/domain and keep the API key
-server-side. For Gmail, follow Google's OAuth/App Password policies. On Render,
-verify outbound SMTP is allowed for the selected plan; SMTP may be blocked or
-restricted. Prefer the HTTPS Resend API if outbound SMTP connectivity is not
-available.
+server-side. For Gmail, follow Google's OAuth/App Password policies and make
+sure the `EMAIL_FROM` address is the authenticated Gmail account or a Gmail
+send-as address already configured on that account. The Gmail OAuth API and
+Resend use HTTPS and do not depend on Render outbound SMTP access. Gmail SMTP
+and generic SMTP still require the hosting provider to permit outbound SMTP.
 
 ### Email production test
 
@@ -714,6 +722,9 @@ features and plan limitations can change.
 - [Vite environment variables and modes](https://vite.dev/guide/env-and-mode)
 - [Google Gemini API documentation](https://ai.google.dev/gemini-api/docs)
 - [Google OAuth 2.0](https://developers.google.com/identity/protocols/oauth2)
+- [Gmail API sending guide](https://developers.google.com/workspace/gmail/api/guides/sending)
+- [Gmail API OAuth scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
+- [Gmail API users.getProfile](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile)
 - [Google App Passwords](https://support.google.com/accounts/answer/185833)
 - [Nodemailer SMTP OAuth2](https://nodemailer.com/smtp/oauth2)
 - [Resend domains](https://resend.com/docs/dashboard/domains/introduction)

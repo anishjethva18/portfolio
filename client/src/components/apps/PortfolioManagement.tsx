@@ -55,6 +55,8 @@ interface PortfolioManagementProps {
   requestedSection?: 'profile' | 'appearance' | 'seo';
 }
 
+const clonePortfolioContent = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 const APPEARANCE_APPS = [...APPS_LIST].sort((left, right) => {
   if (left.id === 'admin') return -1;
   if (right.id === 'admin') return 1;
@@ -259,8 +261,8 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
             : adminAppEnabledInStart,
         },
       };
-      setContent(normalizedDraft);
-      setSavedDraftContent(normalizedDraft);
+      setContent(clonePortfolioContent(normalizedDraft));
+      setSavedDraftContent(clonePortfolioContent(normalizedDraft));
       setPublishedContent(data.published);
       updateHiddenAppIds(data.draft.siteSettings?.disabledApps || []);
     } catch (err: any) {
@@ -286,8 +288,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     setErrorMessage(null);
     try {
       const data = await persistDraft();
-      setContent(data.draft || content);
-      setSavedDraftContent(data.draft || content);
+      const savedDraft = clonePortfolioContent(data.draft || content);
+      setContent(savedDraft);
+      setSavedDraftContent(clonePortfolioContent(savedDraft));
       setPublishedContent(data.published);
       setSuccessMessage('Draft saved. Publish it when you are ready to update the live portfolio.');
       onSaveSuccess?.();
@@ -308,7 +311,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   useEffect(() => {
     const handleDiscardUnsavedEdits = () => {
       if (savedDraftContent !== null) {
-        setContent(savedDraftContent);
+        setContent(clonePortfolioContent(savedDraftContent));
         updateHiddenAppIds(savedDraftContent.siteSettings?.disabledApps || []);
       } else {
         void fetchContent();
@@ -334,8 +337,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     setSuccessMessage(null);
     try {
       const data = await persistDraft();
-      setContent(data.draft || content);
-      setSavedDraftContent(data.draft || content);
+      const savedDraft = clonePortfolioContent(data.draft || content);
+      setContent(savedDraft);
+      setSavedDraftContent(clonePortfolioContent(savedDraft));
       setPublishedContent(data.published);
       setSuccessMessage('Draft saved. Opening the private preview.');
       previewWindow.location.replace('/admin/preview');
@@ -356,8 +360,8 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       const response = await apiFetch('/api/admin/content-studio/discard', { method: 'POST' });
       const data = await response.json();
       if (!response.ok || !data.success || !data.draft) throw new Error(data.error || 'Draft changes could not be discarded.');
-      setContent(data.draft);
-      setSavedDraftContent(data.draft);
+      setContent(clonePortfolioContent(data.draft));
+      setSavedDraftContent(clonePortfolioContent(data.draft));
       setPublishedContent(data.published);
       updateHiddenAppIds(data.published?.siteSettings?.disabledApps || []);
       setSuccessMessage('Draft changes discarded. The published content is restored.');
@@ -378,8 +382,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       const response = await apiFetch('/api/admin/content-studio/publish', { method: 'POST' });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Portfolio content could not be published.');
-      setContent(data.draft || content);
-      setSavedDraftContent(data.draft || content);
+      const savedDraft = clonePortfolioContent(data.draft || content);
+      setContent(savedDraft);
+      setSavedDraftContent(clonePortfolioContent(savedDraft));
       setPublishedContent(data.published);
       const liveProfile = data.published?.profile;
       if (typeof liveProfile?.avatar === 'string' && liveProfile.avatar.trim()) {
@@ -832,7 +837,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const handleUpdateExperience = (idx: number, field: string, val: any) => {
     setContent((prev: any) => {
       const copy = [...prev.experiences];
-      copy[idx][field] = val;
+      copy[idx] = { ...copy[idx], [field]: val };
       return { ...prev, experiences: copy };
     });
   };
@@ -865,7 +870,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const handleUpdateEducation = (idx: number, field: string, val: any) => {
     setContent((prev: any) => {
       const copy = [...prev.education];
-      copy[idx][field] = val;
+      copy[idx] = { ...copy[idx], [field]: val };
       return { ...prev, education: copy };
     });
   };
@@ -1481,7 +1486,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
                   <label className="text-[11px] font-semibold text-slate-300 sm:col-span-2">Description<textarea rows={3} value={edu.description ?? edu.details ?? ''} onChange={(e) => { handleUpdateEducation(idx, 'description', e.target.value); handleUpdateEducation(idx, 'details', e.target.value); }} className="mt-1.5 w-full resize-y rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-white" /></label>
                 </div>
                 <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h5 className="text-xs font-semibold text-white">Key achievements</h5><p className="mt-1 text-[10px] text-slate-400">{(edu.achievements || []).length} items</p></div><button type="button" onClick={() => handleUpdateEducation(idx, 'achievements', [...(edu.achievements || []), ''])} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-800"><Plus className="h-3.5 w-3.5" />Add achievement</button></div>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h5 className="text-xs font-semibold text-white">Key achievements</h5><p className="mt-1 text-[10px] text-slate-400">{(edu.achievements || []).length} items</p></div><button type="button" onClick={() => handleUpdateEducation(idx, 'achievements', [...(edu.achievements || []), ''])} style={{ backgroundColor: '#334155', borderColor: '#475569', color: '#ffffff' }} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-semibold transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white"><Plus className="h-3.5 w-3.5" />Add achievement</button></div>
                   {(edu.achievements || []).map((achievement: string, achievementIndex: number) => <div key={achievementIndex} className="mb-2 flex min-w-0 items-center gap-1"><input value={achievement} onChange={(event) => updateEducationAchievement(idx, achievementIndex, event.target.value)} aria-label={`Achievement ${achievementIndex + 1}`} className="min-w-0 flex-1 rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2 text-xs text-white" placeholder="Achievement" /><button type="button" aria-label={`Move achievement ${achievementIndex + 1} up`} disabled={achievementIndex === 0} onClick={() => handleUpdateEducation(idx, 'achievements', moveItem(edu.achievements || [], achievementIndex, -1))} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button><button type="button" aria-label={`Move achievement ${achievementIndex + 1} down`} disabled={achievementIndex === edu.achievements.length - 1} onClick={() => handleUpdateEducation(idx, 'achievements', moveItem(edu.achievements || [], achievementIndex, 1))} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button><button type="button" aria-label="Remove achievement" onClick={() => handleUpdateEducation(idx, 'achievements', edu.achievements.filter((_: any, i: number) => i !== achievementIndex))} className="rounded-lg p-2 text-rose-400 hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button></div>)}
                   {!edu.achievements?.length && <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-[10px] text-slate-500">No achievements yet. Add one to get started.</p>}
                 </section>
@@ -1498,7 +1503,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
           <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-bold text-white">Certifications</h3><p className="mt-1 text-xs text-slate-400">Manage certificate details, images, links, and visibility.</p></div><button type="button" onClick={addCertification} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-500"><Plus className="h-4 w-4" />Add certification</button></div>
             {(content.certifications || []).map((certificate: any, idx: number) => <article key={idx} className="min-w-0 space-y-4 rounded-2xl border border-slate-800/70 bg-[#11141c] p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3"><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-white">{certificate.title || `Certification ${idx + 1}`}</h4><p className="text-[10px] text-slate-400">{[certificate.provider, certificate.artLabel].filter(Boolean).join(' · ') || 'Certificate details'}</p></div><div className="flex items-center gap-1"><button type="button" aria-label={`${isRecordExpanded(`certification-${idx}`) ? 'Hide' : 'Show'} details for ${certificate.title || `certification ${idx + 1}`}`} title={isRecordExpanded(`certification-${idx}`) ? 'Hide details' : 'Show details'} aria-expanded={isRecordExpanded(`certification-${idx}`)} onClick={() => toggleRecordExpanded(`certification-${idx}`)} className="admin-disclosure-edit-button admin-responsive-action inline-flex h-10 min-h-10 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold"><ChevronDown className={`h-3.5 w-3.5 transition-transform ${isRecordExpanded(`certification-${idx}`) ? 'rotate-180' : ''}`} /><span className="admin-responsive-action-label">{isRecordExpanded(`certification-${idx}`) ? 'Hide details' : 'Show details'}</span></button><button type="button" aria-label={`Move certification ${idx + 1} up`} disabled={idx === 0} onClick={() => reorderCertifications(idx, -1)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button><button type="button" aria-label={`Move certification ${idx + 1} down`} disabled={idx === content.certifications.length - 1} onClick={() => reorderCertifications(idx, 1)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button><button type="button" aria-label={`Delete certification ${idx + 1}`} onClick={() => setContent((prev: any) => ({ ...prev, certifications: prev.certifications.filter((_: any, itemIndex: number) => itemIndex !== idx) }))} className="rounded-lg p-2 text-rose-400 hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3"><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-white">{certificate.title || `Certification ${idx + 1}`}</h4><p className="text-[10px] text-slate-400">{[certificate.provider, certificate.artLabel].filter(Boolean).join(' · ') || 'Certificate details'}</p></div><div className="flex flex-wrap items-center gap-1"><button type="button" aria-label={`${isRecordExpanded(`certification-${idx}`) ? 'Hide' : 'Show'} details for ${certificate.title || `certification ${idx + 1}`}`} title={isRecordExpanded(`certification-${idx}`) ? 'Hide details' : 'Show details'} aria-expanded={isRecordExpanded(`certification-${idx}`)} onClick={() => toggleRecordExpanded(`certification-${idx}`)} className="admin-disclosure-edit-button admin-responsive-action inline-flex h-10 min-h-10 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold"><ChevronDown className={`h-3.5 w-3.5 transition-transform ${isRecordExpanded(`certification-${idx}`) ? 'rotate-180' : ''}`} /><span className="admin-responsive-action-label">{isRecordExpanded(`certification-${idx}`) ? 'Hide details' : 'Show details'}</span></button><VisibilityToggle label={certificate.title || `certification ${idx + 1}`} visible={certificate.visible !== false} onToggle={(visible) => updateCertification(idx, 'visible', visible)} /><button type="button" aria-label={`Move certification ${idx + 1} up`} disabled={idx === 0} onClick={() => reorderCertifications(idx, -1)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button><button type="button" aria-label={`Move certification ${idx + 1} down`} disabled={idx === content.certifications.length - 1} onClick={() => reorderCertifications(idx, 1)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button><button type="button" aria-label={`Delete certification ${idx + 1}`} onClick={() => setContent((prev: any) => ({ ...prev, certifications: prev.certifications.filter((_: any, itemIndex: number) => itemIndex !== idx) }))} className="rounded-lg p-2 text-rose-400 hover:bg-rose-500/10"><Trash2 className="h-4 w-4" /></button></div></div>
               {isRecordExpanded(`certification-${idx}`) && <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <label className="text-[11px] font-semibold text-slate-300">Title<input value={certificate.title || ''} onChange={(e) => updateCertification(idx, 'title', e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs text-white" /></label>
                 <label className="text-[11px] font-semibold text-slate-300">Provider<input value={certificate.provider || ''} onChange={(e) => updateCertification(idx, 'provider', e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs text-white" /></label>
@@ -1528,7 +1533,6 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
                 <label className="text-[11px] font-semibold text-slate-300">Cover label<input value={certificate.artLabel || ''} onChange={(e) => updateCertification(idx, 'artLabel', e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs text-white" /></label>
                 <label className="text-[11px] font-semibold text-slate-300">Cover detail<input value={certificate.artDetail || ''} onChange={(e) => updateCertification(idx, 'artDetail', e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs text-white" /></label>
                 <label className="text-[11px] font-semibold text-slate-300">Link<input type="url" value={certificate.link || ''} onChange={(e) => updateCertification(idx, 'link', e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700/60 bg-slate-900 px-3 py-2.5 text-xs text-white" /></label>
-                <div className="sm:col-span-2 flex justify-end"><VisibilityToggle label={certificate.title || `certification ${idx + 1}`} visible={certificate.visible !== false} onToggle={(visible) => updateCertification(idx, 'visible', visible)} /></div>
               </div>}
             </article>)}
             {!content.certifications?.length && <p className="rounded-xl border border-dashed border-slate-700 px-4 py-8 text-center text-xs text-slate-500">No certifications yet. Add one to get started.</p>}

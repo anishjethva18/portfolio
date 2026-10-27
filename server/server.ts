@@ -173,7 +173,7 @@ async function startServer() {
   // Cookie parser for JWT session cookies
   app.use(cookieParser());
 
-  app.use('/api/admin/backup/restore', requireAdmin, validateCsrf, express.json({ limit: '70mb' }));
+  app.use('/api/admin/backup/restore', requireAdmin, validateCsrf, express.json({ limit: '110mb' }));
 
   // Body parser middleware (support media and photo data URLs)
   app.use(express.json({ limit: '20mb' }));

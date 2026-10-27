@@ -1044,9 +1044,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
               </div>
 
               {/* Mini Desktop Preview Window */}
-              <div className="relative aspect-[16/8] sm:aspect-[16/7] w-full rounded-xl overflow-hidden border border-white/20 shadow-lg bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-950 flex flex-col justify-between p-3">
+              <div className="relative aspect-[16/8] sm:aspect-[16/7] w-full rounded-xl overflow-hidden border border-white/20 shadow-lg bg-black flex flex-col justify-between p-3">
                 {/* Background Layer Preview */}
-                {settings.wallpaper === 'custom' && resolvedDesktopWallpaper ? (
+                {settings.wallpaper === 'custom' ? (
                   resolvedDesktopWallpaper.includes('youtube.com') || resolvedDesktopWallpaper.includes('youtu.be') ? (
                     <div className="absolute inset-0 bg-slate-900 flex items-center justify-center text-xs text-cyan-300 font-bold">
                       YouTube Live Video Wallpaper Active
@@ -1075,7 +1075,9 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
                     />
                   ) : (
                     <img
-                      src={resolvedDesktopWallpaper}
+                      src={/^(?:file:\/\/|[a-z]:[\\/])/i.test(resolvedDesktopWallpaper) || !resolvedDesktopWallpaper
+                        ? '/downloads/Windows_11.jpg'
+                        : resolvedDesktopWallpaper}
                       alt="Desktop Preview"
                       referrerPolicy="no-referrer"
                       className={`absolute inset-0 w-full h-full ${
@@ -1088,7 +1090,11 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
                           : 'object-cover'
                       }`}
                       onError={(event) => {
-                        event.currentTarget.style.display = 'none';
+                        if (event.currentTarget.src.endsWith('/downloads/Windows_11.jpg')) {
+                          event.currentTarget.style.display = 'none';
+                        } else {
+                          event.currentTarget.src = '/downloads/Windows_11.jpg';
+                        }
                       }}
                     />
                   )
@@ -1627,7 +1633,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
                     <div>
                       <div className="text-xs text-slate-900 dark:text-white font-medium">Active Weather City: <span className="text-cyan-600 dark:text-cyan-400 font-bold">{locationStatus}</span></div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                        Zero startup prompts. Select your city or detect GPS on demand.
+                        Select your city or detect GPS on demand.
                       </div>
                     </div>
                   </div>

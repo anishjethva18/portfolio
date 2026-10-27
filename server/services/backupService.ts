@@ -11,6 +11,7 @@ import {
     ProjectModel,
     SiteContentModel,
 } from '../models';
+import type { StoredFileMetadata } from '../db/database';
 import { contentStudioService } from './contentStudioService';
 import { projectDraftService } from './projectDraftService';
 import { fileService } from './fileService';
@@ -19,7 +20,7 @@ import { getPortfolioBackupRoot, getPortfolioStorageRoot } from '../utils/portfo
 
 const MAX_BACKUP_MEDIA_BYTES = 12 * 1024 * 1024;
 const MAX_FULL_BACKUP_MEDIA_BYTES = 50 * 1024 * 1024;
-const MAX_SERIALIZED_BACKUP_BYTES = 68 * 1024 * 1024;
+const MAX_SERIALIZED_BACKUP_BYTES = 100 * 1024 * 1024;
 
 export type BackupType = 'manual-portfolio' | 'full-portfolio-assets';
 
@@ -28,6 +29,7 @@ export type PortfolioBackup = {
         timestamp: string;
         version: string;
         type: BackupType;
+        warnings?: string[];
         integrity?: { algorithm: 'sha256'; digest: string };
     };
     collections: {
@@ -61,6 +63,7 @@ export interface BackupResult {
     timestamp: string;
     collections: string[];
     type?: BackupType;
+    warnings?: string[];
 }
 
 export interface LegacyBackupMove {
@@ -76,10 +79,80 @@ function getBackupIntegrityDigest(snapshot: Pick<PortfolioBackup, 'metadata' | '
             timestamp: snapshot.metadata.timestamp,
             version: snapshot.metadata.version,
             type: snapshot.metadata.type,
+            ...(snapshot.metadata.warnings ? { warnings: snapshot.metadata.warnings } : {}),
         },
         collections: snapshot.collections,
     };
     return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+export function getPortfolioMediaReferenceId(value: string): string | undefined {
+    try {
+        const url = new URL(value, 'http://portfolio.local');
+        if (!url.pathname.startsWith('/api/portfolio-media/')) return undefined;
+        const id = url.searchParams.get('id') ||
+            decodeURIComponent(url.pathname.slice('/api/portfolio-media/'.length));
+        return /^file-[A-Za-z0-9-]+$/.test(id) ? id : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export function removeUnavailablePortfolioMediaReferences<T>(
+    value: T,
+    availableIds: ReadonlySet<string>,
+): { value: T; missingIds: string[] } {
+    if (!value || typeof value !== 'object') {
+        if (typeof value !== 'string') return { value, missingIds: [] };
+        const id = getPortfolioMediaReferenceId(value);
+        return id && !availableIds.has(id)
+            ? { value: '' as T, missingIds: [id] }
+            : { value, missingIds: [] };
+    }
+
+    const root: unknown[] | Record<string, unknown> = Array.isArray(value) ? [] : {};
+    const pending: Array<{
+        source: unknown[] | Record<string, unknown>;
+        target: unknown[] | Record<string, unknown>;
+    }> = [{ source: value as unknown[] | Record<string, unknown>, target: root }];
+    const missingIds = new Set<string>();
+
+    while (pending.length) {
+        const { source, target } = pending.pop()!;
+        const entries: Array<[string, unknown]> = Array.isArray(source)
+            ? source.map((item, index) => [String(index), item])
+            : Object.entries(source);
+
+        for (const [key, child] of entries) {
+            let nextValue = child;
+            if (typeof child === 'string') {
+                const id = getPortfolioMediaReferenceId(child);
+                if (id && !availableIds.has(id)) {
+                    missingIds.add(id);
+                    nextValue = '';
+                }
+            }
+
+            if (Array.isArray(target)) {
+                const index = Number(key);
+                if (!child || typeof child !== 'object') {
+                    target[index] = nextValue;
+                } else {
+                    const nested: unknown[] | Record<string, unknown> = Array.isArray(child) ? [] : {};
+                    target[index] = nested;
+                    pending.push({ source: child as unknown[] | Record<string, unknown>, target: nested });
+                }
+            } else if (!child || typeof child !== 'object') {
+                target[key] = nextValue;
+            } else {
+                const nested: unknown[] | Record<string, unknown> = Array.isArray(child) ? [] : {};
+                target[key] = nested;
+                pending.push({ source: child as unknown[] | Record<string, unknown>, target: nested });
+            }
+        }
+    }
+
+    return { value: root as T, missingIds: Array.from(missingIds) };
 }
 
 export function verifyBackupIntegrity(value: unknown): value is PortfolioBackup {
@@ -195,6 +268,7 @@ export class BackupService {
             throw new Error('MongoDB must be connected to create a portfolio backup.');
         }
 
+        await fileService.restorePortfolioMediaIndex();
         const content = await contentStudioService.getSnapshot(fallbackContent);
         if (!content.published.profile || !content.draft.profile) {
             throw new Error('Portfolio content is unavailable; refusing to create an unrestorable backup.');
@@ -234,23 +308,32 @@ export class BackupService {
         if (contentRevisions) collectReferences(contentRevisions);
 
         const media: PortfolioBackup['collections']['media'] = [];
+        const warnings = new Set<string>();
         let totalMediaBytes = 0;
         const maxMediaBytes = backupType === 'full-portfolio-assets' ? MAX_FULL_BACKUP_MEDIA_BYTES : MAX_BACKUP_MEDIA_BYTES;
 
-        // Collect referenced media first
-        for (const id of references) {
-            const file = await FileMetadataModel.findOne({
-                id,
-                path: { $regex: '^Portfolio/Media/' },
-            }).lean();
-            if (!file || !file.extension) {
-                throw new Error(`Referenced portfolio media is missing or unavailable: ${id}`);
+        const referencedFiles: StoredFileMetadata[] = references.size
+            ? await FileMetadataModel.find({ id: { $in: Array.from(references) } }).lean<StoredFileMetadata[]>()
+            : [];
+        const filesById = new Map(referencedFiles.map((file) => [file.id, file]));
+        for (const file of fileService.getAllFiles()) {
+            if (references.has(file.id) && !filesById.has(file.id)) filesById.set(file.id, file);
+        }
+
+        const addMedia = (file: StoredFileMetadata | undefined, id: string) => {
+            const normalizedPath = file?.path.replace(/\\/g, '/');
+            if (!file || !normalizedPath?.startsWith('Portfolio/Media/') || !file.extension) {
+                warnings.add(`Portfolio media ${id} was unavailable and its broken reference was removed from the backup.`);
+                return;
             }
             const buffer = fileService.getStoredFileBuffer(file);
-            if (!buffer) throw new Error(`Referenced portfolio media content is unavailable: ${id}`);
+            if (!buffer) {
+                warnings.add(`Portfolio media ${id} had no readable file content and its broken reference was removed from the backup.`);
+                return;
+            }
             totalMediaBytes += buffer.length;
             if (totalMediaBytes > maxMediaBytes) {
-                throw new Error(`Referenced portfolio media exceeds the ${Math.round(maxMediaBytes / (1024 * 1024))} MB backup limit.`);
+                throw new Error(`Portfolio media exceeds the ${Math.round(maxMediaBytes / (1024 * 1024))} MB backup limit.`);
             }
             media.push({
                 sourceUrl: `/api/portfolio-media/${encodeURIComponent(id)}`,
@@ -262,53 +345,64 @@ export class BackupService {
                 path: file.path,
                 storagePath: fileService.getStorageDisplayPath(file),
             });
+        };
+
+        for (const id of references) {
+            addMedia(filesById.get(id) || fileService.getFileById(id), id);
         }
 
         // If full asset backup, also include all other stored media files
         if (backupType === 'full-portfolio-assets') {
-            const allFiles = await FileMetadataModel.find({
+            const databaseMediaFiles: StoredFileMetadata[] = await FileMetadataModel.find({
                 path: { $regex: '^Portfolio/Media/' },
-            }).lean();
-            for (const file of allFiles) {
-                if (references.has(file.id)) continue;
-                if (!file.extension) {
-                    throw new Error(`Stored portfolio media is missing or unavailable: ${file.id}`);
-                }
-                const buffer = fileService.getStoredFileBuffer(file);
-                if (!buffer) throw new Error(`Stored portfolio media content is unavailable: ${file.id}`);
-                totalMediaBytes += buffer.length;
-                if (totalMediaBytes > maxMediaBytes) {
-                    throw new Error(`Full portfolio media exceeds the ${Math.round(maxMediaBytes / (1024 * 1024))} MB backup limit. No partial backup was created.`);
-                }
-                media.push({
-                    sourceUrl: `/api/portfolio-media/${encodeURIComponent(file.id)}`,
-                    id: file.id,
-                    name: file.name,
-                    extension: file.extension.toLowerCase(),
-                    sizeBytes: buffer.length,
-                    contentBase64: buffer.toString('base64'),
-                    path: file.path,
-                    storagePath: fileService.getStorageDisplayPath(file),
-                });
+            }).lean<StoredFileMetadata[]>();
+            const allFilesById = new Map(databaseMediaFiles.map((file) => [file.id, file]));
+            for (const file of fileService.getAllFiles()) {
+                if (file.path.replace(/\\/g, '/').startsWith('Portfolio/Media/')) allFilesById.set(file.id, file);
+            }
+            const includedIds = new Set(media.map((item) => item.id));
+            for (const file of allFilesById.values()) {
+                if (includedIds.has(file.id)) continue;
+                addMedia(file, file.id);
             }
         }
 
+        const availableMediaIds = new Set(media.map((item) => item.id).filter((id): id is string => Boolean(id)));
+        const sanitizedPublished = removeUnavailablePortfolioMediaReferences(content.published, availableMediaIds);
+        const sanitizedDraft = removeUnavailablePortfolioMediaReferences(content.draft, availableMediaIds);
+        const sanitizedProjects = removeUnavailablePortfolioMediaReferences(projects, availableMediaIds);
+        const sanitizedProjectDrafts = projectDrafts
+            ? removeUnavailablePortfolioMediaReferences(projectDrafts, availableMediaIds)
+            : undefined;
+        const sanitizedRevisions = contentRevisions
+            ? removeUnavailablePortfolioMediaReferences(contentRevisions, availableMediaIds)
+            : undefined;
+        for (const id of [
+            ...sanitizedPublished.missingIds,
+            ...sanitizedDraft.missingIds,
+            ...sanitizedProjects.missingIds,
+            ...(sanitizedProjectDrafts?.missingIds || []),
+            ...(sanitizedRevisions?.missingIds || []),
+        ]) {
+            warnings.add(`Portfolio media ${id} was unavailable and its broken reference was removed from the backup.`);
+        }
+
         const collections: PortfolioBackup['collections'] = {
-            publishedContent: content.published,
-            draftContent: content.draft,
-            projects: projects.map(({ _id, __v, ...project }) => project as Record<string, unknown>),
+            publishedContent: sanitizedPublished.value,
+            draftContent: sanitizedDraft.value,
+            projects: sanitizedProjects.value.map(({ _id, __v, ...project }) => project as Record<string, unknown>),
             media,
         };
 
         if (projectDrafts) {
-            collections.projectDrafts = projectDrafts.map(({ ...project }) =>
+            collections.projectDrafts = (sanitizedProjectDrafts?.value || projectDrafts).map(({ ...project }) =>
                 project as Record<string, unknown>
             );
         }
         if (contacts) collections.contacts = contacts.map(({ _id, __v, ...contact }) => contact as Record<string, unknown>);
         if (analytics) collections.analytics = analytics.map(({ _id, __v, ...event }) => event as Record<string, unknown>);
         if (contentRevisions) {
-            collections.contentRevisions = contentRevisions.map(({ _id, __v, ...revision }) =>
+            collections.contentRevisions = (sanitizedRevisions?.value || contentRevisions).map(({ _id, __v, ...revision }) =>
                 revision as Record<string, unknown>
             );
         }
@@ -319,6 +413,7 @@ export class BackupService {
                 timestamp: new Date().toISOString(),
                 version: '3.3.0',
                 type: backupType,
+                ...(warnings.size ? { warnings: Array.from(warnings) } : {}),
             },
             collections,
         };
@@ -327,7 +422,7 @@ export class BackupService {
             digest: getBackupIntegrityDigest(snapshot),
         };
         if (Buffer.byteLength(JSON.stringify(snapshot), 'utf8') > MAX_SERIALIZED_BACKUP_BYTES) {
-            throw new Error('Complete backup exceeds the 68 MB JSON limit. No partial backup was created.');
+            throw new Error('Complete backup exceeds the 100 MB JSON limit. No partial backup was created.');
         }
         return snapshot;
     }
@@ -345,7 +440,7 @@ export class BackupService {
             const data = await this.createSnapshot(backupType, fallbackContent);
             const serialized = JSON.stringify(data, null, 2);
             if (Buffer.byteLength(serialized, 'utf8') > MAX_SERIALIZED_BACKUP_BYTES) {
-                throw new Error('Complete backup exceeds the 68 MB JSON limit. No partial backup was created.');
+                throw new Error('Complete backup exceeds the 100 MB JSON limit. No partial backup was created.');
             }
             let fileName = baseFileName;
             let filePath = path.join(this.backupDir, fileName);
@@ -387,6 +482,7 @@ export class BackupService {
                 timestamp: data.metadata.timestamp,
                 collections: Object.keys(data.collections),
                 type: backupType,
+                ...(data.metadata.warnings ? { warnings: data.metadata.warnings } : {}),
             };
         } catch (err) {
             if (incompleteBackupPath && fs.existsSync(incompleteBackupPath)) {

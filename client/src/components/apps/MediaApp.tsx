@@ -3132,7 +3132,7 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
                   <h1 className={`text-xl font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     Media App Settings
                   </h1>
-                  <p className="text-xs text-slate-400">Configure theme, playback, and indexed folders on This PC</p>
+                  <p className="text-xs text-slate-400">Configure theme and playback preferences</p>
                 </div>
               </div>
 
@@ -3309,70 +3309,6 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
                 </div>
               </div>
 
-              {/* Section 4: Indexed Folders on This PC */}
-              <div
-                className={`p-5 rounded-2xl border space-y-4 shadow-xs ${
-                  isDarkTheme ? 'bg-[#222226] border-white/10' : 'bg-white border-slate-200'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <HardDrive className="w-4 h-4 text-amber-400" />
-                    <span>Indexed Media Folders (This PC)</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      soundManager.play('notification');
-                      addNotification({
-                        title: 'Library Re-indexed',
-                        message: `Successfully synchronized ${mediaFiles.length} media items.`,
-                        type: 'success',
-                        appId: 'photos',
-                      });
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Re-index Library</span>
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {albumsOnThisPC.map((alb) => (
-                    <div
-                      key={alb.id}
-                      className={`flex items-center justify-between p-3 rounded-xl border ${
-                        isDarkTheme ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400 shrink-0">
-                          {renderAlbumIcon(alb.iconType, 'w-4 h-4')}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-semibold text-xs truncate">{alb.title}</p>
-                          <p className="text-[10px] text-slate-400 font-mono truncate">{alb.path}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-mono opacity-70">{alb.count} items</span>
-                        <button
-                          onClick={() => openApp('explorer', { initialPath: alb.path })}
-                          className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                            isDarkTheme
-                              ? 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
-                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-xs'
-                          }`}
-                          title="Open Folder in File Explorer"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 

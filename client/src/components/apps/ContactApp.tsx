@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { ContactSubmissionResponse } from '../../types';
 import { usePublishedProfile } from '../../hooks/usePublishedProfile';
-import { AlertCircle, ArrowUpRight, CheckCircle2, ExternalLink, File, Github, Instagram, Linkedin, Mail, MapPin, Paperclip, Phone, Send, ShieldCheck, Sparkles, Twitter, X, type LucideIcon } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ExternalLink, File, Github, Instagram, Linkedin, Mail, MapPin, Paperclip, Phone, Send, ShieldCheck, Sparkles, Twitter, X, type LucideIcon } from 'lucide-react';
 
 export interface ContactAttachment {
   name: string;
@@ -233,7 +233,7 @@ export const ContactApp: React.FC<ContactAppProps> = ({ initialMessage = '', ini
                 {portfolioUser.email && <>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Email</p>
                 <a href={`mailto:${portfolioUser.email}`} className="mt-1 inline-flex max-w-full items-center gap-1 break-all text-xs font-semibold text-sky-700 hover:text-sky-600 hover:underline dark:text-sky-300">
-                  {portfolioUser.email}<ArrowUpRight className="h-3 w-3 shrink-0" />
+                  {portfolioUser.email}
                 </a>
                 </>}
                 {portfolioUser.phone && <a href={`tel:${portfolioUser.phone.replace(/[^\d+]/g, '')}`} className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-sky-700 hover:underline dark:text-slate-300 dark:hover:text-sky-300"><Phone className="h-3 w-3 shrink-0" />{portfolioUser.phone}</a>}
@@ -252,7 +252,6 @@ export const ContactApp: React.FC<ContactAppProps> = ({ initialMessage = '', ini
                   {socialLinks.map(({ url, label, Icon }, index) => (
                     <a key={`${label}-${index}`} href={url} target="_blank" rel="noreferrer" className="group flex min-h-10 items-center justify-between rounded-xl border border-slate-200/70 bg-slate-50/80 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-800 dark:border-white/5 dark:bg-slate-950/60 dark:text-slate-300 dark:hover:border-sky-500/30 dark:hover:bg-sky-500/10 dark:hover:text-sky-200">
                       <span className="flex items-center gap-2"><Icon className="h-3.5 w-3.5 text-slate-500 group-hover:text-sky-600 dark:group-hover:text-sky-300" />{label}</span>
-                      <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
                     </a>
                   ))}
                 </div>

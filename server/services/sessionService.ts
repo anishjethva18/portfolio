@@ -98,7 +98,7 @@ export class SessionService {
    */
   public async validateSession(
     sessionId: string
-  ): Promise<{ userId: string; email: string; role: 'admin' | 'user' | 'guest'; csrfToken: string; sessionId: string } | null> {
+  ): Promise<{ userId: string; email: string; role: 'admin' | 'user' | 'guest'; csrfToken: string; sessionId: string; expiresAt: Date } | null> {
     if (!sessionId || typeof sessionId !== 'string' || !/^[a-f0-9]{64}$/i.test(sessionId)) {
       return null;
     }
@@ -147,7 +147,18 @@ export class SessionService {
     }
 
     if (now.getTime() - lastActive > 60 * 1000) {
-      await SessionModel.updateOne({ sessionId: sessionIdHash }, { $set: { lastActiveAt: now } });
+      const expiresAt = new Date(now.getTime() + SESSION_IDLE_TIMEOUT_MS);
+      await Promise.all([
+        SessionModel.updateOne(
+          { sessionId: sessionIdHash, isRevoked: false },
+          { $set: { lastActiveAt: now, expiresAt } }
+        ),
+        SessionHistoryModel.updateOne(
+          { sessionIdHash, logoutAt: null },
+          { $set: { expiresAt } }
+        ),
+      ]);
+      session.expiresAt = expiresAt;
     }
 
     return {
@@ -156,6 +167,7 @@ export class SessionService {
       role: session.role,
       csrfToken: session.csrfToken,
       sessionId: session.sessionIdHash,
+      expiresAt: session.expiresAt,
     };
   }
 

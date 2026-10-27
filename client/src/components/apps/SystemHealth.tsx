@@ -56,7 +56,7 @@ export const SystemHealth: React.FC<{
         {
             name: 'Email delivery',
             status: health.email?.status === 'configured' ? 'Configured' : 'Not configured',
-            detail: health.email?.status === 'configured' ? 'SMTP credentials are configured; delivery is verified when a reply is sent.' : 'Configure SMTP to send message replies.',
+            detail: health.email?.status === 'configured' ? 'An email provider is configured; verify delivery with the test email action.' : 'Configure Resend, Google OAuth, or SMTP to send message replies.',
             icon: Mail,
             healthy: health.email?.status === 'configured',
         },

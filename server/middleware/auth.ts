@@ -16,7 +16,22 @@ export interface AuthenticatedRequest extends Request {
     userId: string;
     email: string;
     role: 'admin' | 'user' | 'guest';
+    expiresAt: Date;
   };
+}
+
+function refreshSessionCookies(
+  res: Response,
+  session: NonNullable<Awaited<ReturnType<typeof sessionService.validateSession>>>,
+  sessionId: string
+): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  const sidCookieName = isProd ? '__Host-sid' : 'sid';
+  const maxAge = Math.max(1, session.expiresAt.getTime() - Date.now());
+  const options = { secure: isProd, sameSite: 'lax' as const, maxAge, path: '/' };
+
+  res.cookie(sidCookieName, sessionId, { ...options, httpOnly: true });
+  res.cookie('csrfToken', session.csrfToken, { ...options, httpOnly: false });
 }
 
 /**
@@ -72,6 +87,7 @@ export const requireAuth = async (
     role: session.role,
   };
   req.sessionInfo = session;
+  refreshSessionCookies(res, session, sessionId);
 
   next();
 };
@@ -79,7 +95,7 @@ export const requireAuth = async (
 /** Attach a valid session when one is present without blocking public portfolio actions. */
 export const optionalAuth = async (
   req: AuthenticatedRequest,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   if (req.user && req.sessionInfo) {
@@ -96,6 +112,7 @@ export const optionalAuth = async (
     if (session) {
       req.user = { userId: session.userId, email: session.email, role: session.role };
       req.sessionInfo = session;
+      refreshSessionCookies(res, session, sessionId);
     }
   } catch {
     // Capture remains available to a visitor if optional session lookup is unavailable.
@@ -172,6 +189,7 @@ export const validateCsrf = async (
       if (session) {
         req.user = { userId: session.userId, email: session.email, role: session.role };
         req.sessionInfo = session;
+        refreshSessionCookies(res, session, sessionId);
       }
     }
   }

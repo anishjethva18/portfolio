@@ -62,7 +62,7 @@ export const ContactManagement: React.FC<{
                 const sendData = await sendRes.json();
                 setSmtpResult({
                     type: 'success',
-                    message: `${verifyData.message} ${sendData.result?.note || 'Live test email verified.'}`,
+                    message: `${verifyData.message} ${sendData.result?.note || 'Test email delivery verified.'}`,
                 });
             } else {
                 setSmtpResult({
@@ -73,7 +73,7 @@ export const ContactManagement: React.FC<{
         } catch (err: any) {
             setSmtpResult({
                 type: 'error',
-                message: err.message || 'SMTP test failed.',
+                message: err.message || 'Email delivery test failed.',
             });
         } finally {
             setTestingSmtp(false);
@@ -140,7 +140,7 @@ export const ContactManagement: React.FC<{
                         className="admin-action-button inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-50"
                     >
                         {testingSmtp ? <LoaderCircle size={14} className="animate-spin" /> : <Mail size={14} />}
-                        {testingSmtp ? 'Testing SMTP…' : 'Test Live SMTP Delivery'}
+                        {testingSmtp ? 'Testing email delivery…' : 'Test Email Delivery'}
                     </button>
                 </div>
             </div>

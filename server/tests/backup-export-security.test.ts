@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { createPortableBackup, PortfolioBackup, verifyBackupIntegrity } from '../services/backupService';
+import {
+  createPortableBackup,
+  PortfolioBackup,
+  removeUnavailablePortfolioMediaReferences,
+  verifyBackupIntegrity,
+} from '../services/backupService';
+
+test('unavailable media references are removed without changing other backup content', () => {
+  const source = {
+    profile: {
+      avatar: '/api/portfolio-media/file-missing-avatar',
+      name: 'Portfolio owner',
+    },
+    projects: [{
+      image: '/api/portfolio-media/file-available-image',
+      description: 'Project description',
+    }],
+  };
+  const sanitized = removeUnavailablePortfolioMediaReferences(
+    source,
+    new Set(['file-available-image']),
+  );
+
+  assert.deepEqual(sanitized.missingIds, ['file-missing-avatar']);
+  assert.equal(sanitized.value.profile.avatar, '');
+  assert.equal(sanitized.value.projects[0].image, '/api/portfolio-media/file-available-image');
+  assert.equal(sanitized.value.projects[0].description, 'Project description');
+  assert.equal(source.profile.avatar, '/api/portfolio-media/file-missing-avatar');
+});
 
 test('portable full backups include portfolio records but omit account credentials without mutating source', () => {
   const fullSnapshot: PortfolioBackup = {

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, shouldRetrySmtpFallback } from '../services/emailService';
+import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { SiteContentModel } from '../models';
 import { getEmailConfig } from '../config/emailConfig';
@@ -28,8 +28,9 @@ test('email provider selection supports automatic Resend, Google OAuth, Gmail SM
     GOOGLE_OAUTH_REFRESH_TOKEN: 'refresh-token',
   } as NodeJS.ProcessEnv);
   assert.equal(googleOAuth.provider, 'gmail_oauth');
-  assert.equal(googleOAuth.smtp?.host, 'smtp.gmail.com');
-  assert.equal(googleOAuth.smtp?.auth && 'type' in googleOAuth.smtp.auth ? googleOAuth.smtp.auth.type : '', 'OAuth2');
+  assert.equal(googleOAuth.smtp, undefined);
+  assert.equal(googleOAuth.googleOAuth?.user, 'mailer@gmail.com');
+  assert.equal(googleOAuth.googleOAuth?.refreshToken, 'refresh-token');
 
   const gmailSmtp = getEmailConfig({
     EMAIL_USER: 'mailer@gmail.com',
@@ -55,6 +56,82 @@ test('email provider selection supports automatic Resend, Google OAuth, Gmail SM
     EMAIL_PASS: 'smtp-password',
   } as NodeJS.ProcessEnv);
   assert.equal(explicitSmtp.provider, 'smtp');
+});
+
+test('Gmail OAuth delivery uses the Gmail HTTPS API and sends a valid base64url MIME message', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  let submittedMime = '';
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url === 'https://oauth2.googleapis.com/token') {
+      return new Response(JSON.stringify({ access_token: 'oauth-access-token' }), { status: 200 });
+    }
+    assert.equal(url, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer oauth-access-token');
+    const body = JSON.parse(String(init?.body)) as { raw: string };
+    submittedMime = Buffer.from(body.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    return new Response(JSON.stringify({ id: 'gmail-message-123' }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const result = await sendWithGmailApi({
+      user: 'mailer@gmail.com',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+    }, {
+      from: 'Portfolio <mailer@gmail.com>',
+      to: 'owner@example.test',
+      replyTo: 'visitor@example.test',
+      subject: 'Portfolio inquiry',
+      text: 'Hello from the contact form.',
+      attachments: [{
+        filename: 'resume.pdf',
+        content: Buffer.from('%PDF-test'),
+        contentType: 'application/pdf',
+      }],
+    });
+
+    assert.equal(result.messageId, 'gmail-message-123');
+    assert.deepEqual(requestedUrls, [
+      'https://oauth2.googleapis.com/token',
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    ]);
+    assert.match(submittedMime, /To: owner@example\.test/i);
+    assert.match(submittedMime, /Subject: Portfolio inquiry/i);
+    assert.match(submittedMime, /filename=resume\.pdf/i);
+    assert.match(submittedMime, /JVBERi10ZXN0/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Gmail OAuth verification checks Gmail API access without SMTP', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url === 'https://oauth2.googleapis.com/token') {
+      return new Response(JSON.stringify({ access_token: 'oauth-access-token' }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ emailAddress: 'mailer@gmail.com' }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await verifyGmailApiAccess({
+      user: 'mailer@gmail.com',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+    });
+    assert.deepEqual(requestedUrls, [
+      'https://oauth2.googleapis.com/token',
+      'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('Resend delivery maps recipients, reply-to, attachments, and provider errors', async () => {

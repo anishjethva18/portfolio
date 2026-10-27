@@ -386,6 +386,37 @@ test('backup restore recovers every affected data area on failure and serializes
       assert.equal(legacyResponse.body.success, true);
     });
 
+    await t.test('restores a backup with stale media references and reports removed links', async () => {
+      await resetBaseline();
+      const backup = await createBackup();
+      const missingMediaUrl = '/api/portfolio-media/file-missing-from-backup';
+      backup.collections.publishedContent.profile.avatar = missingMediaUrl;
+      backup.collections.draftContent.profile.avatar = missingMediaUrl;
+      backup.collections.contentRevisions[0].content.profile.avatar = missingMediaUrl;
+      withIntegrity(backup);
+
+      const response = await restoreRequest(backup);
+      assert.equal(response.status, 200);
+      assert.equal(response.body.success, true);
+      assert.equal(response.body.warnings.length, 1);
+      assert.match(response.body.warnings[0], /file-missing-from-backup/);
+      assert.equal(
+        await SiteContentModel.findOne({ key: 'primary_portfolio_content' }).lean()
+          .then((doc) => doc?.profile?.avatar),
+        ''
+      );
+      assert.equal(
+        await AdminContentDraftModel.findOne({ key: 'primary_portfolio_content' }).lean()
+          .then((doc) => (doc?.content as any)?.profile?.avatar),
+        ''
+      );
+      assert.equal(
+        await AdminContentRevisionModel.findOne({ key: 'primary_portfolio_content' }).lean()
+          .then((doc) => (doc?.content as any)?.profile?.avatar),
+        ''
+      );
+    });
+
     await t.test('rejects corrupted integrity before changing data', async () => {
       await resetBaseline();
       const corrupted = await createBackup();

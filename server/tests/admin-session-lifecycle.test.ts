@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import crypto from 'crypto';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { db } from '../db/database';
-import { requireAdmin } from '../middleware/auth';
+import { requireAdmin, validateCsrf } from '../middleware/auth';
 import { SessionHistoryModel, SessionModel, UserModel } from '../models';
 import { authRouter } from '../routes/auth';
 import { sessionService } from '../services/sessionService';
@@ -20,8 +20,9 @@ async function runAdminSessionLifecycleTests(): Promise<void> {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
+  app.use(validateCsrf);
   app.use('/api/auth', authRouter);
-  app.get('/api/admin/protected', requireAdmin, (_req, res) => res.json({ success: true }));
+  app.post('/api/admin/protected', requireAdmin, (_req, res) => res.json({ success: true }));
   const server = app.listen(0);
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Could not start admin session test server.');
@@ -66,16 +67,38 @@ async function runAdminSessionLifecycleTests(): Promise<void> {
     const visitorSessionResult = await sessionService.createSession(visitor);
     assert(
       first.session.expiresAt.getTime() - first.session.createdAt.getTime() === 15 * 60 * 1000,
-      'Administrator sessions have a fixed 15-minute maximum lifetime'
+      'Administrator sessions initially expire after 15 minutes of inactivity'
     );
     currentAdminSession = first.sessionId;
     otherAdminSession = second.sessionId;
     visitorSession = visitorSessionResult.sessionId;
 
+    const currentAdminHash = crypto.createHash('sha256').update(currentAdminSession).digest('hex');
+    const previousExpiry = new Date(Date.now() + 60 * 1000);
+    await SessionModel.updateOne(
+      { sessionId: currentAdminHash },
+      { $set: { lastActiveAt: new Date(Date.now() - 2 * 60 * 1000), expiresAt: previousExpiry } }
+    );
     const protectedResponse = await fetch(`${baseUrl}/api/admin/protected`, {
-      headers: { Cookie: `sid=${currentAdminSession}` },
+      method: 'POST',
+      headers: {
+        Cookie: `sid=${currentAdminSession}; csrfToken=${first.csrfToken}`,
+        'X-CSRF-Token': first.csrfToken,
+      },
     });
-    assert(protectedResponse.ok, 'A valid administrator session can access protected admin APIs');
+    const renewedSession = await SessionModel.findOne({ sessionId: currentAdminHash }).lean();
+    const renewedHistory = await SessionHistoryModel.findOne({ sessionIdHash: currentAdminHash }).lean();
+    const refreshedCookies = protectedResponse.headers.get('set-cookie') || '';
+    assert(
+      protectedResponse.ok &&
+        renewedSession !== null &&
+        renewedHistory !== null &&
+        renewedSession.expiresAt.getTime() > previousExpiry.getTime() &&
+        renewedHistory.expiresAt.getTime() === renewedSession.expiresAt.getTime() &&
+        refreshedCookies.includes(`sid=${currentAdminSession}`) &&
+        refreshedCookies.includes(`csrfToken=${first.csrfToken}`),
+      'Active API traffic extends session and history expiry and refreshes both browser cookies'
+    );
 
     const logoutResponse = await fetch(`${baseUrl}/api/auth/logout`, {
       method: 'POST',
@@ -93,12 +116,17 @@ async function runAdminSessionLifecycleTests(): Promise<void> {
     );
 
     const revokedApiResponse = await fetch(`${baseUrl}/api/admin/protected`, {
+      method: 'POST',
       headers: { Cookie: `sid=${currentAdminSession}` },
     });
     assert(revokedApiResponse.status === 401, 'Revoked admin sessions are rejected by protected APIs');
 
     const visitorProtectedResponse = await fetch(`${baseUrl}/api/admin/protected`, {
-      headers: { Cookie: `sid=${visitorSession}` },
+      method: 'POST',
+      headers: {
+        Cookie: `sid=${visitorSession}; csrfToken=${visitorSessionResult.csrfToken}`,
+        'X-CSRF-Token': visitorSessionResult.csrfToken,
+      },
     });
     assert(visitorProtectedResponse.status === 403, 'Visitor sessions remain valid but cannot access admin APIs');
     const visitorLogoutResponse = await fetch(`${baseUrl}/api/auth/logout`, {
@@ -118,6 +146,7 @@ async function runAdminSessionLifecycleTests(): Promise<void> {
     const expiredHash = crypto.createHash('sha256').update(expiredSession.sessionId).digest('hex');
     await SessionModel.updateOne({ sessionId: expiredHash }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
     const expiredApiResponse = await fetch(`${baseUrl}/api/admin/protected`, {
+      method: 'POST',
       headers: { Cookie: `sid=${expiredSession.sessionId}` },
     });
     assert(

@@ -659,10 +659,151 @@ export interface EmailDeliveryInfo {
 export function getEmailProviderLabel(provider: EmailProvider): string {
   switch (provider) {
     case 'resend': return 'Resend API';
-    case 'gmail_oauth': return 'Gmail OAuth2';
+    case 'gmail_oauth': return 'Gmail API (OAuth2)';
     case 'gmail_smtp': return 'Gmail SMTP';
     case 'smtp': return 'SMTP';
     case 'dev_mock': return 'Dev/Mock Store';
+  }
+}
+
+type GoogleOAuthConfig = NonNullable<EmailConfig['googleOAuth']>;
+
+async function fetchWithDeadline(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  providerName: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error(`${providerName} request timed out after ${timeoutMs}ms.`), { code: 'ETIMEDOUT' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getGoogleOAuthAccessToken(
+  credentials: GoogleOAuthConfig,
+  timeoutMs = 15000,
+): Promise<string> {
+  const response = await fetchWithDeadline(
+    'https://oauth2.googleapis.com/token',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
+        refresh_token: credentials.refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    },
+    timeoutMs,
+    'Google OAuth',
+  );
+  const result = await response.json().catch(() => ({})) as {
+    access_token?: unknown;
+    error_description?: unknown;
+    error?: unknown;
+  };
+  if (!response.ok || typeof result.access_token !== 'string' || !result.access_token) {
+    const detail = typeof result.error_description === 'string'
+      ? result.error_description
+      : typeof result.error === 'string'
+        ? result.error
+        : `Google OAuth returned HTTP ${response.status}.`;
+    throw new Error(`Google OAuth token refresh failed: ${detail}`);
+  }
+  return result.access_token;
+}
+
+export async function sendWithGmailApi(
+  credentials: GoogleOAuthConfig,
+  message: SendMailOptions,
+  timeoutMs = 20000,
+): Promise<EmailDeliveryInfo> {
+  const accessToken = await getGoogleOAuthAccessToken(credentials, timeoutMs);
+  const mimeTransport = nodemailer.createTransport({
+    streamTransport: true,
+    buffer: true,
+    newline: 'unix',
+  });
+  const mime = await mimeTransport.sendMail(message);
+  const messageOutput: unknown = mime.message;
+  let mimeBytes: Buffer;
+  if (Buffer.isBuffer(messageOutput)) {
+    mimeBytes = messageOutput;
+  } else if (typeof messageOutput === 'string') {
+    mimeBytes = Buffer.from(messageOutput);
+  } else if (
+    messageOutput &&
+    typeof messageOutput === 'object' &&
+    Symbol.asyncIterator in messageOutput
+  ) {
+    const mimeChunks: Buffer[] = [];
+    for await (const chunk of messageOutput as AsyncIterable<Uint8Array | string>) {
+      mimeChunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
+    }
+    mimeBytes = Buffer.concat(mimeChunks);
+  } else {
+    throw new Error('Nodemailer did not produce a readable MIME message for Gmail API delivery.');
+  }
+  const raw = mimeBytes.toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+  const response = await fetchWithDeadline(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw }),
+    },
+    timeoutMs,
+    'Gmail API',
+  );
+  const result = await response.json().catch(() => ({})) as {
+    id?: unknown;
+    error?: { message?: unknown };
+  };
+  if (!response.ok || typeof result.id !== 'string' || !result.id) {
+    const detail = typeof result.error?.message === 'string'
+      ? result.error.message
+      : `Gmail API returned HTTP ${response.status}.`;
+    throw new Error(`Gmail API email delivery failed: ${detail}`);
+  }
+  return { messageId: result.id };
+}
+
+export async function verifyGmailApiAccess(
+  credentials: GoogleOAuthConfig,
+  timeoutMs = 15000,
+): Promise<void> {
+  const accessToken = await getGoogleOAuthAccessToken(credentials, timeoutMs);
+  const response = await fetchWithDeadline(
+    'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    timeoutMs,
+    'Gmail API',
+  );
+  const result = await response.json().catch(() => ({})) as {
+    emailAddress?: unknown;
+    error?: { message?: unknown };
+  };
+  if (!response.ok || typeof result.emailAddress !== 'string') {
+    const detail = typeof result.error?.message === 'string'
+      ? result.error.message
+      : `Gmail API returned HTTP ${response.status}.`;
+    throw new Error(`Gmail API access verification failed: ${detail}`);
   }
 }
 
@@ -756,9 +897,7 @@ async function sendThroughResend(
 }
 
 export class EmailService {
-  /**
-   * Main email dispatch handler using SMTP when configured
-   */
+  /** Main email dispatch handler using the selected provider. */
   public async handleContactSubmission(data: ValidatedContactBody, requestPublicOrigin = ''): Promise<SendContactResult> {
     const config = getEmailConfig();
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -807,6 +946,10 @@ export class EmailService {
       };
     }
 
+    if (config.provider === 'gmail_oauth' && config.googleOAuth) {
+      return this.sendViaGmailApi(config, data, emailHtml, receiptHtml, messageId, canonicalUrl);
+    }
+
     // Send the owner notification and visitor receipt through SMTP.
     if (config.smtp) {
       return this.sendViaSmtp(config, data, emailHtml, receiptHtml, messageId, canonicalUrl);
@@ -827,6 +970,77 @@ export class EmailService {
       receiver: config.receiverEmail,
       note: 'Message stored in database.',
     };
+  }
+
+  private async sendViaGmailApi(
+    config: EmailConfig,
+    data: ValidatedContactBody,
+    emailHtml: string,
+    receiptHtml: string,
+    messageId: string,
+    canonicalUrl: string,
+  ): Promise<SendContactResult> {
+    try {
+      await sendWithGmailApi(config.googleOAuth!, {
+        from: config.fromEmail,
+        to: config.receiverEmail,
+        replyTo: `"${data.name}" <${data.email}>`,
+        subject: `[Portfolio Contact] ${data.subject} - from ${data.name}`,
+        html: emailHtml,
+        text: `New portfolio inquiry\n\nFrom: ${data.name}\nEmail: ${data.email}\nSubject: ${data.subject}\n\n${data.message}${canonicalUrl ? `\n\nPortfolio OS: ${canonicalUrl}` : ''}`,
+        attachments: (data.attachments || [])
+          .filter((attachment) => Boolean(attachment.content))
+          .map((attachment) => {
+            const content = attachment.content || '';
+            const dataUrlMatch = content.match(/^data:[^;]+;base64,(.+)$/);
+            return {
+              filename: attachment.name,
+              content: dataUrlMatch ? Buffer.from(dataUrlMatch[1], 'base64') : Buffer.from(content),
+              contentType: attachment.type || 'application/octet-stream',
+            };
+          }),
+      });
+
+      void sendWithGmailApi(config.googleOAuth!, {
+        from: config.fromEmail,
+        to: data.email,
+        subject: `Receipt: Message delivered to Anish Jethva ("${data.subject}")`,
+        html: receiptHtml,
+        text: `Hi ${data.name},\n\nThank you for getting in touch through my Windows 11 Portfolio OS. Your inquiry has been received and is ready for review.\n\nSubject: ${data.subject}\n\nYour message:\n${data.message}\n\nBest regards,\nAnish Jethva${canonicalUrl ? `\n\nPortfolio OS: ${canonicalUrl}` : ''}`,
+      }).catch((error: unknown) => {
+        console.warn(
+          '[EmailService] Gmail API confirmation receipt could not be sent:',
+          error instanceof Error ? error.message : 'Unknown delivery error.',
+        );
+      });
+
+      contactDb.updateStatus(messageId, 'delivered', true);
+      return {
+        success: true,
+        messageId,
+        timestamp: data.timestamp,
+        status: 'delivered',
+        emailSent: true,
+        provider: getEmailProviderLabel(config.provider),
+        receiver: config.receiverEmail,
+        note: `Live email delivered via Gmail API to ${config.receiverEmail}.`,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Gmail API delivery failed.';
+      console.error('[EmailService] Gmail API contact delivery failed:', errorMessage);
+      contactDb.updateStatus(messageId, 'failed', false, errorMessage);
+      return {
+        success: true,
+        messageId,
+        timestamp: data.timestamp,
+        status: 'failed',
+        emailSent: false,
+        provider: getEmailProviderLabel(config.provider),
+        receiver: config.receiverEmail,
+        error: errorMessage,
+        note: `Message saved in portfolio database. ${errorMessage}`,
+      };
+    }
   }
 
   /**
@@ -1046,7 +1260,7 @@ export class EmailService {
     requestPublicOrigin = ''
   ): Promise<void> {
     const config = getEmailConfig();
-    if (!config.smtp && !config.resend) {
+    if (!config.smtp && !config.resend && !config.googleOAuth) {
       throw new Error('Email delivery is not configured. Configure Resend, Google OAuth, or SMTP before sending replies.');
     }
 
@@ -1062,6 +1276,10 @@ export class EmailService {
     };
     if (config.resend) {
       await sendThroughResend(config, mailOptions);
+      return;
+    }
+    if (config.googleOAuth) {
+      await sendWithGmailApi(config.googleOAuth, mailOptions);
       return;
     }
     const smtpConfig = config.smtp;
@@ -1113,6 +1331,25 @@ export class EmailService {
       }
     }
 
+    if (config.googleOAuth) {
+      try {
+        await sendWithGmailApi(config.googleOAuth, {
+          from: config.fromEmail,
+          to: email,
+          subject,
+          html,
+          text: `Reset your administrator password\n\nUse this link to choose a new password (expires in 15 minutes): ${resetUrl}\n\nAnish Jethva · Portfolio OS${canonicalUrl ? `\n${canonicalUrl}` : ''}`,
+        });
+        return true;
+      } catch (error) {
+        console.warn(
+          '[EmailService] Gmail API delivery unavailable for password reset:',
+          error instanceof Error ? error.message : 'Unknown delivery error.',
+        );
+        return false;
+      }
+    }
+
     if (config.smtp) {
       try {
         const transporter = nodemailer.createTransport({
@@ -1142,7 +1379,7 @@ export class EmailService {
   }
 
   /**
-   * Diagnostic verification for SMTP connection and credentials
+   * Diagnostic verification for the active provider and credentials.
    */
   public async verifySmtpConnection(): Promise<{
     configured: boolean;
@@ -1191,6 +1428,28 @@ export class EmailService {
         };
       } finally {
         clearTimeout(timeout);
+      }
+    }
+    if (config.googleOAuth) {
+      try {
+        await verifyGmailApiAccess(config.googleOAuth);
+        return {
+          configured: true,
+          connected: true,
+          provider: getEmailProviderLabel(config.provider),
+          user: config.googleOAuth.user,
+          message: `Gmail API OAuth credentials and send access were verified for ${config.googleOAuth.user}.`,
+        };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Unknown Gmail API error.';
+        return {
+          configured: true,
+          connected: false,
+          provider: getEmailProviderLabel(config.provider),
+          user: config.googleOAuth.user,
+          error: detail,
+          message: detail,
+        };
       }
     }
     if (!config.smtp) {
@@ -1243,7 +1502,7 @@ export class EmailService {
    */
   public async sendTestEmail(targetRecipient?: string): Promise<{
     success: boolean;
-    deliveryMode: 'smtp' | 'resend' | 'test_account' | 'simulated';
+    deliveryMode: 'smtp' | 'resend' | 'gmail_api' | 'test_account' | 'simulated';
     recipient: string;
     messageId: string;
     timestamp: string;
@@ -1255,11 +1514,11 @@ export class EmailService {
     const testId = `test_mail_${Date.now()}`;
     const timestamp = new Date().toISOString();
 
-    const testSubject = `[Windows 11 Portfolio] SMTP Test Delivery (${testId})`;
+    const testSubject = `[Windows 11 Portfolio] Email Test Delivery (${testId})`;
     const testHtml = `
       <div style="font-family:sans-serif;padding:24px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
-        <h2 style="color:#0284c7;margin:0 0 12px 0;">Windows 11 OS Portfolio - SMTP Delivery Test</h2>
-        <p style="color:#334155;font-size:14px;line-height:1.6;">This is an automated test message dispatched to verify live SMTP email delivery pipeline from the Windows 11 Portfolio OS.</p>
+        <h2 style="color:#0284c7;margin:0 0 12px 0;">Windows 11 OS Portfolio - Email Delivery Test</h2>
+        <p style="color:#334155;font-size:14px;line-height:1.6;">This is an automated test message dispatched to verify live email delivery from the Windows 11 Portfolio OS.</p>
         <ul style="color:#475569;font-size:13px;line-height:1.8;">
           <li><strong>Timestamp:</strong> ${timestamp}</li>
           <li><strong>Test ID:</strong> ${testId}</li>
@@ -1284,6 +1543,24 @@ export class EmailService {
         messageId: info.messageId,
         timestamp,
         note: `Test email delivered via Resend API to ${recipient}.`,
+      };
+    }
+
+    if (config.googleOAuth) {
+      const info = await sendWithGmailApi(config.googleOAuth, {
+        from: config.fromEmail,
+        to: recipient,
+        subject: testSubject,
+        html: testHtml,
+        text: `Windows 11 OS Portfolio email delivery test. Test ID: ${testId}.`,
+      });
+      return {
+        success: true,
+        deliveryMode: 'gmail_api',
+        recipient,
+        messageId: info.messageId,
+        timestamp,
+        note: `Test email delivered via Gmail API to ${recipient}.`,
       };
     }
 
