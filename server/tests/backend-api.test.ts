@@ -40,7 +40,7 @@ import { projectDraftService } from '../services/projectDraftService';
 import { getLivePortfolioContent } from '../routes/admin';
 import { browseRouter } from '../routes/browse';
 import { apiNotFoundHandler } from '../middleware/apiNotFound';
-import { filesRouter, hasMediaUrlReference, removeMediaUrlReferences } from '../routes/files';
+import { filesRouter, hasMediaUrlReference, hasVisibleResumeMediaReference, removeMediaUrlReferences } from '../routes/files';
 import { analyticsRouter } from '../routes/analytics';
 import { widgetsRouter } from '../routes/widgets';
 
@@ -117,6 +117,16 @@ async function runTests() {
     hasMediaUrlReference({ resume: aliasedMediaReference }, mediaReferencePath) &&
       cleanedAliasReference.resume === '',
     'Filename-based media URLs remain reference-aware for authorization and deletion'
+  );
+  assert(
+    hasVisibleResumeMediaReference([
+      { file: mediaReferencePath, active: false },
+      { file: '/api/portfolio-media/file-hidden-resume', visible: false },
+    ], mediaReferencePath) &&
+      !hasVisibleResumeMediaReference([
+        { file: mediaReferencePath, visible: false },
+      ], mediaReferencePath),
+    'Public media access follows resume visibility, not which visible resume is selected by default'
   );
   assert(
     isValidBackupBase64('A'.repeat(8 * 1024 * 1024)) &&

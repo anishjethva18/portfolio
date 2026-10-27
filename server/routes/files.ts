@@ -53,6 +53,17 @@ export function hasMediaUrlReference(value: unknown, mediaPath: string): boolean
   return false;
 }
 
+export function hasVisibleResumeMediaReference(resumes: unknown, mediaPath: string): boolean {
+  if (!Array.isArray(resumes)) return false;
+  return hasMediaUrlReference(
+    resumes.filter((resume) =>
+      resume && typeof resume === 'object' &&
+      (resume as Record<string, unknown>).visible !== false
+    ),
+    mediaPath
+  );
+}
+
 export function removeMediaUrlReferences(value: unknown, mediaPath: string): unknown {
   if (isMediaUrlReference(value, mediaPath)) return '';
   const isAtomicValue = (candidate: unknown): boolean => Boolean(

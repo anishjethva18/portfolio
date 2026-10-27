@@ -185,11 +185,15 @@ Set the name explicitly so it is unambiguous.
   Otherwise arrange regular exports with `mongodump` or another supported
   process and store them outside the application server. Test a restore into a
   separate database before relying on it.
-- The admin JSON backup feature is useful for application-level recovery, but
-  do not treat it as a substitute for a verified Atlas database backup and
-  restore procedure.
-- Define a retention schedule and restrict access to backup files; backups can
-  contain private messages, analytics, user/session records, and uploaded data.
+- The admin JSON backup feature creates a compact portfolio backup containing
+  published/draft content, projects, and media referenced by them. It excludes
+  contacts, analytics, content-revision/audit history, and unreferenced media;
+  older complete JSON backups remain restorable. Use Atlas backups when these
+  excluded database records or broader recovery coverage are required.
+- Do not treat the admin JSON backup as a substitute for a verified Atlas
+  database backup and restore procedure.
+- Define a retention schedule and restrict access to backup files; portfolio
+  backups may contain uploaded media and private draft content.
 
 ## 4. Deploy the backend on Render
 
@@ -422,6 +426,17 @@ based on these actual implemented transports:
    `https://www.googleapis.com/auth/gmail.metadata` scopes. The metadata
    permission is used only by the admin connection check to confirm the Gmail
    account; message delivery uses the send scope.
+   The refresh token is normally reused; Google issues short-lived access
+   tokens from it as needed. Do not generate a new refresh token for each email
+   or deployment. The token must have been issued to the same OAuth client ID
+   and secret configured on the backend, for the Gmail account used as the
+   sender, with offline access and the required scopes. If using Google's OAuth
+   Playground, configure it to use your own OAuth client credentials before
+   authorizing. Google documents that refresh tokens for an external consent
+   screen left in **Testing** can expire after seven days for Gmail scopes; move
+   the consent screen to an appropriate production status before relying on
+   long-lived delivery. A revoked or expired token must be replaced manually in
+   the backend host's secret environment and the service restarted.
 3. **Gmail SMTP:** uses Nodemailer and a Google App Password, not a normal
    account password.
 4. **Generic SMTP:** uses Nodemailer with the configured host, port, TLS mode,
@@ -453,6 +468,13 @@ and generic SMTP still require the hosting provider to permit outbound SMTP.
 4. Test password-reset mail and any admin reply/test-email controls actually
    exposed by the deployed admin panel.
 5. Check the provider's delivery/event dashboard and spam folder.
+
+If Gmail reports `invalid_grant` while refreshing, confirm the refresh token
+was created with the exact client ID/secret pair currently deployed, that its
+Google account matches the sender, and that the consent screen is not still in
+Testing. A refresh token is not an access token; do not put a short-lived access
+token in `GOOGLE_OAUTH_REFRESH_TOKEN`. Never paste either token into logs,
+support messages, or source control.
 6. On failure, inspect Render logs and provider response details; check sender
    verification, quota, credentials, DNS, SMTP port/TLS, and host restrictions.
 

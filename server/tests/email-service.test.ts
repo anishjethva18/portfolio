@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
+import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getGoogleOAuthAccessToken, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { SiteContentModel } from '../models';
 import { getEmailConfig } from '../config/emailConfig';
@@ -102,6 +102,34 @@ test('Gmail OAuth delivery uses the Gmail HTTPS API and sends a valid base64url 
     assert.match(submittedMime, /Subject: Portfolio inquiry/i);
     assert.match(submittedMime, /filename=resume\.pdf/i);
     assert.match(submittedMime, /JVBERi10ZXN0/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Gmail OAuth invalid_grant errors explain likely refresh-token causes without exposing credentials', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    error: 'invalid_grant',
+    error_description: 'Bad Request',
+  }), { status: 400 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      getGoogleOAuthAccessToken({
+        user: 'mailer@gmail.com',
+        clientId: 'private-client-id',
+        clientSecret: 'private-client-secret',
+        refreshToken: 'private-refresh-token',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /invalid_grant/);
+        assert.match(error.message, /different OAuth client/);
+        assert.match(error.message, /Testing mode/);
+        assert.doesNotMatch(error.message, /private-client|private-refresh/);
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

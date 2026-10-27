@@ -99,7 +99,7 @@ async function fetchMarketQuotes(): Promise<MarketData> {
   }
 
   if (!quotes.length) {
-    throw new Error('Live stock and crypto data is temporarily unavailable.');
+    throw new Error(warnings.join(' ') || 'Live stock and crypto data is temporarily unavailable.');
   }
   return {
     quotes,
@@ -153,7 +153,7 @@ export const WidgetsBoard: React.FC = () => {
       setMarketError(data.warnings.join(' '));
     } catch (error) {
       console.warn('[WidgetsBoard] Market data could not be refreshed.', error);
-      setMarketError('Live market data is temporarily unavailable. Refresh to try again.');
+      setMarketError(error instanceof Error ? error.message : 'Live market data is temporarily unavailable. Refresh to try again.');
     } finally {
       setIsLoadingMarket(false);
     }

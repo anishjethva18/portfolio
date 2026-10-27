@@ -41,6 +41,7 @@ function withIntegrity(backup: Record<string, any>): Record<string, any> {
       timestamp: backup.metadata.timestamp,
       version: backup.metadata.version,
       type: backup.metadata.type,
+      ...(backup.metadata.scope ? { scope: backup.metadata.scope } : {}),
     },
     collections: backup.collections,
   };
@@ -87,6 +88,7 @@ test('backup restore recovers every affected data area on failure and serializes
   } = await import('../models');
   const { contentStudioService } = await import('../services/contentStudioService');
   const { fileService } = await import('../services/fileService');
+  const { backupService } = await import('../services/backupService');
   const { normalizeSkillCategories } = await import('../services/skillCatalog');
   const { getLivePortfolioContent, adminRouter } = await import('../routes/admin');
   const express = (await import('express')).default;
@@ -291,7 +293,14 @@ test('backup restore recovers every affected data area on failure and serializes
     assert.deepEqual(projectDraft?.projects.map((project) => project.id).sort(), baselineProjectIds);
     assert.deepEqual(contacts.map((contact) => contact.name).sort(), baselineContacts.map((item) => item.name).sort());
     assert.deepEqual(users.map((user) => user.name).sort(), baselineUsers.map((item) => item.name).sort());
-    assert.equal(await AdminContentRevisionModel.countDocuments({ key: 'primary_portfolio_content' }), 1);
+    assert.equal(
+      await AdminContentRevisionModel.countDocuments({
+        key: 'primary_portfolio_content',
+        publishedAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      1,
+      'baseline revision history must be present'
+    );
     assert.deepEqual((await AnalyticsModel.find().lean()).map((item) => item.id).sort(), baselineAnalytics.map((item) => item.id));
     assert.deepEqual((await AdminAuditLogModel.find().lean()).map((item) => item.id).sort(), baselineAuditLogs.map((item) => item.id));
     assert.equal(await FileMetadataModel.countDocuments({ path: /^Portfolio\/Media\// }), 0);
@@ -359,6 +368,36 @@ test('backup restore recovers every affected data area on failure and serializes
   };
 
   try {
+    await t.test('creates compact portfolio-only backups and excludes unreferenced media', async () => {
+      const unreferenced = fileService.saveUploadedBuffer(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        'unused.png',
+        'Portfolio/Media/unused.png',
+        'Portfolio/Media',
+        adminId,
+      );
+      await FileMetadataModel.updateOne({ id: unreferenced.id }, { $set: unreferenced }, { upsert: true });
+
+      try {
+        const snapshot = await backupService.createSnapshot('full-portfolio-assets', originalContent);
+        assert.equal(snapshot.metadata.scope, 'portfolio-only');
+        assert.ok(Array.isArray(snapshot.collections.projectDrafts));
+        assert.equal(snapshot.collections.contacts, undefined);
+        assert.equal(snapshot.collections.analytics, undefined);
+        assert.equal(snapshot.collections.contentRevisions, undefined);
+        assert.equal(snapshot.collections.auditLogs, undefined);
+        assert.equal(snapshot.collections.users, undefined);
+        assert.ok(snapshot.collections.media.every((item) =>
+          !('id' in item) && !('path' in item) &&
+          item.sourceUrl !== `/api/portfolio-media/${unreferenced.id}`
+        ));
+      } finally {
+        fileService.deleteFile(unreferenced.id);
+        await FileMetadataModel.deleteOne({ id: unreferenced.id });
+        db.files.delete(unreferenced.id);
+      }
+    });
+
     await t.test('successful checksummed restore and supported legacy no-checksum backup', async () => {
       const success = await restoreRequest(await createBackup());
       assert.equal(success.status, 200);
@@ -384,6 +423,47 @@ test('backup restore recovers every affected data area on failure and serializes
       const legacyResponse = await restoreRequest(legacy);
       assert.equal(legacyResponse.status, 200);
       assert.equal(legacyResponse.body.success, true);
+    });
+
+    await t.test('restores compact portfolio data without replacing operational history', async () => {
+      await resetBaseline();
+      const compact = await createBackup();
+      compact.metadata.scope = 'portfolio-only';
+      for (const key of ['contacts', 'users', 'analytics', 'contentRevisions', 'auditLogs']) {
+        delete compact.collections[key];
+      }
+      compact.collections.projectDrafts[0].title = 'Compact backup draft project';
+      withIntegrity(compact);
+
+      const response = await restoreRequest(compact);
+      assert.equal(response.status, 200);
+      assert.equal(response.body.success, true);
+      assert.equal(response.body.restored.contacts, 0);
+      assert.equal(response.body.restored.analytics, 0);
+      assert.equal(response.body.restored.contentRevisions, 0);
+      assert.equal(response.body.restored.auditLogs, 0);
+      assert.equal(
+        await ContactModel.countDocuments({ id: { $in: baselineContacts.map((item) => item.id) } }),
+        baselineContacts.length
+      );
+      assert.deepEqual((await AnalyticsModel.find().lean()).map((item) => item.id), baselineAnalytics.map((item) => item.id));
+      assert.equal(
+        await AdminAuditLogModel.countDocuments({ id: baselineAuditLogs[0].id }),
+        1,
+        'compact restore must retain existing audit history'
+      );
+      assert.equal(
+        await AdminContentRevisionModel.countDocuments({
+          key: 'primary_portfolio_content',
+          publishedAt: new Date('2026-01-01T00:00:00.000Z'),
+        }),
+        1,
+        'compact restore must retain existing content revision history'
+      );
+      assert.deepEqual(
+        (await AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean())?.projects.map((project) => project.title),
+        ['Compact backup draft project']
+      );
     });
 
     await t.test('restores a backup with stale media references and reports removed links', async () => {

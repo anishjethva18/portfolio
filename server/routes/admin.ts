@@ -4,6 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { db } from '../db/database';
+import type { StoredFileMetadata } from '../db/database';
 import {
   ProjectModel,
   UserModel,
@@ -1537,6 +1538,10 @@ adminRouter.post('/storage/media-migration', async (_req: AuthenticatedRequest, 
 
 adminRouter.get('/vfs-files', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const storedMedia = await FileMetadataModel.find({
+      path: { $regex: '^Portfolio/Media/' },
+    }).lean<StoredFileMetadata[]>();
+    storedMedia.forEach((file) => db.files.set(file.id, file));
     fileService.pruneMissingDiskFiles();
     const { search, pathPrefix } = req.query;
     let items = Array.from(db.files.values());
@@ -1888,8 +1893,13 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
   try {
     const backup = req.body;
     const collections = backup?.collections;
+    const isPortfolioOnlyBackup = backup?.metadata?.scope === 'portfolio-only';
+    const restoreProjectDrafts = backup?.metadata?.type === 'full-portfolio-assets' &&
+      Array.isArray(collections?.projectDrafts);
     if (
       (backup?.metadata?.type !== 'manual-portfolio' && backup?.metadata?.type !== 'full-portfolio-assets') ||
+      (backup?.metadata?.scope !== undefined &&
+        (backup.metadata.type !== 'full-portfolio-assets' || !isPortfolioOnlyBackup)) ||
       !collections ||
       !Array.isArray(collections.projects) ||
       collections.projects.length > 10000 ||
@@ -1901,12 +1911,20 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
       (collections.contentRevisions !== undefined && !Array.isArray(collections.contentRevisions)) ||
       (collections.projectDrafts !== undefined && !Array.isArray(collections.projectDrafts)) ||
       (collections.auditLogs !== undefined && !Array.isArray(collections.auditLogs)) ||
+      (isPortfolioOnlyBackup &&
+        (collections.contacts !== undefined ||
+          collections.users !== undefined ||
+          collections.analytics !== undefined ||
+          collections.contentRevisions !== undefined ||
+          collections.auditLogs !== undefined)) ||
       (backup?.metadata?.type === 'full-portfolio-assets' &&
-        (!Array.isArray(collections.contacts) ||
-          !Array.isArray(collections.analytics) ||
-          !Array.isArray(collections.contentRevisions) ||
-          !Array.isArray(collections.projectDrafts) ||
-          !Array.isArray(collections.auditLogs)))
+        (isPortfolioOnlyBackup
+          ? !Array.isArray(collections.projectDrafts)
+          : !Array.isArray(collections.contacts) ||
+            !Array.isArray(collections.analytics) ||
+            !Array.isArray(collections.contentRevisions) ||
+            !Array.isArray(collections.projectDrafts) ||
+            !Array.isArray(collections.auditLogs)))
     ) {
       res.status(422).json({ success: false, error: 'Backup format is invalid or unsupported.' });
       return;
@@ -1917,6 +1935,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
     }
     if (
       backup.metadata.type === 'full-portfolio-assets' &&
+      !isPortfolioOnlyBackup &&
       (
         collections.contacts.some((item: any) => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
           typeof item.email !== 'string' || typeof item.subject !== 'string' || typeof item.message !== 'string') ||
@@ -1958,7 +1977,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
     }
     const seenDraftProjectIds = new Set<string>();
     const draftProjects: any[] = [];
-    for (const project of backup.metadata.type === 'full-portfolio-assets' ? collections.projectDrafts : []) {
+    for (const project of restoreProjectDrafts ? collections.projectDrafts : []) {
       if (!project || typeof project.id !== 'string' || !/^[\w-]{1,128}$/.test(project.id) ||
         seenDraftProjectIds.has(project.id)) {
         res.status(422).json({ success: false, error: 'Backup contains an invalid or duplicate draft project identifier.' });
@@ -2044,7 +2063,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
             user.id !== req.user!.userId)
           .map((user: any) => user.id as string))]
       : [];
-    const fullRestore = backup.metadata.type === 'full-portfolio-assets';
+    const fullRestore = backup.metadata.type === 'full-portfolio-assets' && !isPortfolioOnlyBackup;
     const [
       previousSiteContent,
       previousDraft,
@@ -2059,7 +2078,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
       SiteContentModel.findOne({ key: 'primary_portfolio_content' }).lean(),
       AdminContentDraftModel.findOne({ key: 'primary_portfolio_content' }).lean(),
       ProjectModel.find().lean(),
-      fullRestore ? AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean() : Promise.resolve(null),
+      restoreProjectDrafts ? AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean() : Promise.resolve(null),
       fullRestore
         ? ContactModel.find().lean()
         : restoreContactIds.length ? ContactModel.find({ id: { $in: restoreContactIds } }).lean() : [],
@@ -2143,7 +2162,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
       if (restoredProjects.length) await ProjectModel.insertMany(restoredProjects);
       db.projects.clear();
       restoredProjects.forEach((project) => db.projects.set(project.id, project));
-      if (fullRestore) {
+      if (restoreProjectDrafts) {
         await AdminProjectDraftModel.findOneAndUpdate(
           { key: 'primary_portfolio_projects' },
           { $set: { projects: restoredDraftProjects, updatedBy: req.user!.userId } },
@@ -2264,7 +2283,7 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
         db.projects.clear();
         previousProjects.forEach((project: any) => db.projects.set(project.id, project));
       });
-      if (fullRestore) {
+      if (restoreProjectDrafts) {
         await attemptRollback('project draft', async () => {
           await AdminProjectDraftModel.deleteOne({ key: 'primary_portfolio_projects' });
           if (previousProjectDraft) await AdminProjectDraftModel.create(previousProjectDraft);

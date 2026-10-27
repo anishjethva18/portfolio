@@ -102,8 +102,13 @@ test('new portfolio media uploads use their private storage category while retai
   assert.equal(previousMetadata?.contentEncoding, undefined);
   db.files.set(profileImage.id, { ...profileImage, content: undefined, contentEncoding: undefined });
   assert.equal(await fileService.persistPortfolioMediaContent(), 1);
+  const persistedImageMetadata = await FileMetadataModel.findOne({ id: profileImage.id }).lean();
+  assert.equal(persistedImageMetadata?.contentEncoding, 'base64');
   fs.unlinkSync(profileImage.diskPath || '');
-  assert.deepEqual(fileService.getStoredFileBuffer(profileImage), Buffer.from('synthetic duplicate image fixture'));
+  assert.deepEqual(
+    fileService.getStoredFileBuffer(persistedImageMetadata!),
+    Buffer.from('synthetic duplicate image fixture')
+  );
   assert.equal(fileService.pruneMissingDiskFiles(), 0);
   assert.ok(fileService.getFileById(profileImage.id));
   fs.writeFileSync(profileImage.diskPath || '', fileService.getStoredFileBuffer(profileImage)!);

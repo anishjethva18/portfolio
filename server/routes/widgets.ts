@@ -108,6 +108,39 @@ async function fetchStockQuote(symbol: string): Promise<StockQuote> {
   };
 }
 
+async function fetchKrakenCryptoQuotes(): Promise<Array<{
+  symbol: string;
+  name: string;
+  current_price: number;
+  price_change_percentage_24h: number;
+}>> {
+  const payload = asRecord(await fetchUpstreamJson(
+    'https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD',
+    'crypto:kraken:btc,eth'
+  ));
+  const result = asRecord(payload?.result);
+  if (!result || (Array.isArray(payload?.error) && payload.error.length > 0)) {
+    throw new Error('Kraken returned an invalid crypto ticker response.');
+  }
+
+  return [
+    { symbol: 'BTC', name: 'Bitcoin', pairFragment: 'XBT' },
+    { symbol: 'ETH', name: 'Ethereum', pairFragment: 'ETH' },
+  ].flatMap(({ symbol, name, pairFragment }) => {
+    const pair = Object.entries(result).find(([key]) => key.toUpperCase().includes(pairFragment));
+    const quote = asRecord(pair?.[1]);
+    const lastTrade = Array.isArray(quote?.c) ? Number(quote.c[0]) : NaN;
+    const openingPrice = typeof quote?.o === 'string' ? Number(quote.o) : NaN;
+    if (!Number.isFinite(lastTrade) || !Number.isFinite(openingPrice) || openingPrice <= 0) return [];
+    return [{
+      symbol,
+      name,
+      current_price: lastTrade,
+      price_change_percentage_24h: ((lastTrade - openingPrice) / openingPrice) * 100,
+    }];
+  });
+}
+
 widgetsRouter.get('/weather', weatherLimiter, async (req, res: Response) => {
   const latitude = Number(req.query.latitude);
   const longitude = Number(req.query.longitude);
@@ -175,10 +208,32 @@ widgetsRouter.get('/geocoding/reverse', geocodingLimiter, async (req, res: Respo
 widgetsRouter.get('/crypto', weatherLimiter, async (_req, res: Response) => {
   const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h';
   try {
-    res.json({ success: true, data: await fetchUpstreamJson(url, 'crypto:usd:btc,eth') });
-  } catch (error) {
-    console.error('[Widgets] Crypto provider request failed.', error);
-    res.status(502).json({ success: false, error: 'Live crypto quotes are temporarily unavailable.' });
+    const responseData = await fetchUpstreamJson(url, 'crypto:usd:btc,eth');
+    const data = Array.isArray(responseData)
+      ? responseData.filter((coin) => {
+          const ticker = asRecord(coin);
+          return typeof ticker?.symbol === 'string' &&
+            typeof ticker.name === 'string' &&
+            typeof ticker.current_price === 'number' &&
+            Number.isFinite(ticker.current_price) &&
+            typeof ticker.price_change_percentage_24h === 'number' &&
+            Number.isFinite(ticker.price_change_percentage_24h);
+        })
+      : [];
+    if (!data.length) {
+      throw new Error('CoinGecko returned no crypto tickers.');
+    }
+    res.json({ success: true, data, provider: 'CoinGecko' });
+  } catch (primaryError) {
+    console.warn('[Widgets] CoinGecko crypto quotes unavailable; trying Kraken.', primaryError);
+    try {
+      const data = await fetchKrakenCryptoQuotes();
+      if (!data.length) throw new Error('Kraken did not return valid BTC or ETH quotes.');
+      res.json({ success: true, data, provider: 'Kraken' });
+    } catch (fallbackError) {
+      console.error('[Widgets] Both CoinGecko and Kraken crypto feeds failed.', fallbackError);
+      res.status(502).json({ success: false, error: 'Live crypto quotes are temporarily unavailable from CoinGecko and Kraken.' });
+    }
   }
 });
 

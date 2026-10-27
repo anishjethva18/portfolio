@@ -3,10 +3,6 @@ import path from 'path';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import {
-    AdminAuditLogModel,
-    AdminContentRevisionModel,
-    AnalyticsModel,
-    ContactModel,
     FileMetadataModel,
     ProjectModel,
     SiteContentModel,
@@ -29,6 +25,7 @@ export type PortfolioBackup = {
         timestamp: string;
         version: string;
         type: BackupType;
+        scope?: 'portfolio-only';
         warnings?: string[];
         integrity?: { algorithm: 'sha256'; digest: string };
     };
@@ -39,12 +36,10 @@ export type PortfolioBackup = {
         projectDrafts?: Array<Record<string, unknown>>;
         media: Array<{
             sourceUrl: string;
-            id?: string;
             name: string;
             extension: string;
             sizeBytes: number;
             contentBase64: string;
-            path?: string;
             storagePath?: string;
         }>;
         users?: Array<Record<string, unknown>>;
@@ -63,6 +58,7 @@ export interface BackupResult {
     timestamp: string;
     collections: string[];
     type?: BackupType;
+    scope?: 'portfolio-only';
     warnings?: string[];
 }
 
@@ -79,6 +75,7 @@ function getBackupIntegrityDigest(snapshot: Pick<PortfolioBackup, 'metadata' | '
             timestamp: snapshot.metadata.timestamp,
             version: snapshot.metadata.version,
             type: snapshot.metadata.type,
+            ...(snapshot.metadata.scope ? { scope: snapshot.metadata.scope } : {}),
             ...(snapshot.metadata.warnings ? { warnings: snapshot.metadata.warnings } : {}),
         },
         collections: snapshot.collections,
@@ -276,14 +273,6 @@ export class BackupService {
         const projects = await ProjectModel.find().lean();
         const includeCompleteData = backupType === 'full-portfolio-assets';
         const projectDrafts = includeCompleteData ? await projectDraftService.getDraftProjects() : undefined;
-        const [contacts, analytics, contentRevisions, auditLogs] = includeCompleteData
-            ? await Promise.all([
-                ContactModel.find().lean(),
-                AnalyticsModel.find().lean(),
-                AdminContentRevisionModel.find({ key: 'primary_portfolio_content' }).sort({ publishedAt: 1, _id: 1 }).lean(),
-                AdminAuditLogModel.find().lean(),
-            ])
-            : [undefined, undefined, undefined, undefined];
         const references = new Set<string>();
         const collectReferences = (value: unknown) => {
             if (typeof value === 'string') {
@@ -305,7 +294,6 @@ export class BackupService {
         collectReferences(content.draft);
         collectReferences(projects);
         if (projectDrafts) collectReferences(projectDrafts);
-        if (contentRevisions) collectReferences(contentRevisions);
 
         const media: PortfolioBackup['collections']['media'] = [];
         const warnings = new Set<string>();
@@ -337,12 +325,10 @@ export class BackupService {
             }
             media.push({
                 sourceUrl: `/api/portfolio-media/${encodeURIComponent(id)}`,
-                id,
                 name: file.name,
                 extension: file.extension.toLowerCase(),
                 sizeBytes: buffer.length,
                 contentBase64: buffer.toString('base64'),
-                path: file.path,
                 storagePath: fileService.getStorageDisplayPath(file),
             });
         };
@@ -351,38 +337,21 @@ export class BackupService {
             addMedia(filesById.get(id) || fileService.getFileById(id), id);
         }
 
-        // If full asset backup, also include all other stored media files
-        if (backupType === 'full-portfolio-assets') {
-            const databaseMediaFiles: StoredFileMetadata[] = await FileMetadataModel.find({
-                path: { $regex: '^Portfolio/Media/' },
-            }).lean<StoredFileMetadata[]>();
-            const allFilesById = new Map(databaseMediaFiles.map((file) => [file.id, file]));
-            for (const file of fileService.getAllFiles()) {
-                if (file.path.replace(/\\/g, '/').startsWith('Portfolio/Media/')) allFilesById.set(file.id, file);
-            }
-            const includedIds = new Set(media.map((item) => item.id));
-            for (const file of allFilesById.values()) {
-                if (includedIds.has(file.id)) continue;
-                addMedia(file, file.id);
-            }
-        }
-
-        const availableMediaIds = new Set(media.map((item) => item.id).filter((id): id is string => Boolean(id)));
+        const availableMediaIds = new Set(
+            media.map((item) => getPortfolioMediaReferenceId(item.sourceUrl))
+                .filter((id): id is string => Boolean(id))
+        );
         const sanitizedPublished = removeUnavailablePortfolioMediaReferences(content.published, availableMediaIds);
         const sanitizedDraft = removeUnavailablePortfolioMediaReferences(content.draft, availableMediaIds);
         const sanitizedProjects = removeUnavailablePortfolioMediaReferences(projects, availableMediaIds);
         const sanitizedProjectDrafts = projectDrafts
             ? removeUnavailablePortfolioMediaReferences(projectDrafts, availableMediaIds)
             : undefined;
-        const sanitizedRevisions = contentRevisions
-            ? removeUnavailablePortfolioMediaReferences(contentRevisions, availableMediaIds)
-            : undefined;
         for (const id of [
             ...sanitizedPublished.missingIds,
             ...sanitizedDraft.missingIds,
             ...sanitizedProjects.missingIds,
             ...(sanitizedProjectDrafts?.missingIds || []),
-            ...(sanitizedRevisions?.missingIds || []),
         ]) {
             warnings.add(`Portfolio media ${id} was unavailable and its broken reference was removed from the backup.`);
         }
@@ -399,20 +368,12 @@ export class BackupService {
                 project as Record<string, unknown>
             );
         }
-        if (contacts) collections.contacts = contacts.map(({ _id, __v, ...contact }) => contact as Record<string, unknown>);
-        if (analytics) collections.analytics = analytics.map(({ _id, __v, ...event }) => event as Record<string, unknown>);
-        if (contentRevisions) {
-            collections.contentRevisions = (sanitizedRevisions?.value || contentRevisions).map(({ _id, __v, ...revision }) =>
-                revision as Record<string, unknown>
-            );
-        }
-        if (auditLogs) collections.auditLogs = auditLogs.map(({ _id, __v, ...entry }) => entry as Record<string, unknown>);
-
         const snapshot: PortfolioBackup = {
             metadata: {
                 timestamp: new Date().toISOString(),
-                version: '3.3.0',
+                version: '3.4.0',
                 type: backupType,
+                ...(includeCompleteData ? { scope: 'portfolio-only' as const } : {}),
                 ...(warnings.size ? { warnings: Array.from(warnings) } : {}),
             },
             collections,
@@ -438,7 +399,7 @@ export class BackupService {
 
         try {
             const data = await this.createSnapshot(backupType, fallbackContent);
-            const serialized = JSON.stringify(data, null, 2);
+            const serialized = JSON.stringify(data);
             if (Buffer.byteLength(serialized, 'utf8') > MAX_SERIALIZED_BACKUP_BYTES) {
                 throw new Error('Complete backup exceeds the 100 MB JSON limit. No partial backup was created.');
             }
@@ -482,6 +443,7 @@ export class BackupService {
                 timestamp: data.metadata.timestamp,
                 collections: Object.keys(data.collections),
                 type: backupType,
+                ...(data.metadata.scope ? { scope: data.metadata.scope } : {}),
                 ...(data.metadata.warnings ? { warnings: data.metadata.warnings } : {}),
             };
         } catch (err) {
@@ -532,6 +494,7 @@ export class BackupService {
             let type: BackupType = latest.name.startsWith('full-backup-') || latest.name.startsWith('portfolio-full-backup-') || latest.name.startsWith('Windows-11-Portfolio-Backup-')
                 ? 'full-portfolio-assets'
                 : 'manual-portfolio';
+            let scope: PortfolioBackup['metadata']['scope'];
             try {
                 const backup = JSON.parse(fs.readFileSync(latest.filePath, 'utf8')) as PortfolioBackup;
                 if (!verifyBackupIntegrity(backup)) {
@@ -544,6 +507,7 @@ export class BackupService {
                 if (backup.metadata?.type === 'full-portfolio-assets' || backup.metadata?.type === 'manual-portfolio') {
                     type = backup.metadata.type;
                 }
+                if (backup.metadata?.scope === 'portfolio-only') scope = backup.metadata.scope;
             } catch (error) {
                 console.error(`[BackupService] Could not read backup metadata from ${latest.name}:`, error);
                 return null;
@@ -558,6 +522,7 @@ export class BackupService {
                 timestamp,
                 collections: [],
                 type,
+                ...(scope ? { scope } : {}),
             };
         } catch (error) {
             console.error('[BackupService] Could not determine the latest backup:', error);

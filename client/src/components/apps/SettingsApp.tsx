@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useOS } from '../../context/OSContext';
 import { WallpaperId, DesktopIconItem, AppId } from '../../types';
+import { Wallpaper } from '../desktop/Wallpaper';
 import { usePublishedProfile } from '../../hooks/usePublishedProfile';
 import { fetchLiveWeather, WeatherData } from '../../utils/weather';
 import { D_DRIVE_FOLDER_PATHS } from '../../utils/virtualDDrive';
@@ -99,16 +100,6 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [customLiveUrl, setCustomLiveUrl] = useState(settings.customWallpaperUrl || '');
 
-  const resolvedDesktopWallpaper = React.useMemo(() => {
-    if (!settings.customWallpaperUrl) return '';
-    const matching = files.find(
-      (f) =>
-        f.path === settings.customWallpaperUrl ||
-        f.id === settings.customWallpaperUrl ||
-        f.name === settings.customWallpaperUrl
-    );
-    return matching?.content || settings.customWallpaperUrl;
-  }, [settings.customWallpaperUrl, files]);
   const [pcName] = useState('ANISH-PORTFOLIO-PC');
   const [locationStatus, setLocationStatus] = useState<string>('Default (Ahmedabad)');
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
@@ -1045,66 +1036,7 @@ export const SettingsApp: React.FC<SettingsAppProps> = ({ initialTab }) => {
 
               {/* Mini Desktop Preview Window */}
               <div className="relative aspect-[16/8] sm:aspect-[16/7] w-full rounded-xl overflow-hidden border border-white/20 shadow-lg bg-black flex flex-col justify-between p-3">
-                {/* Background Layer Preview */}
-                {settings.wallpaper === 'custom' ? (
-                  resolvedDesktopWallpaper.includes('youtube.com') || resolvedDesktopWallpaper.includes('youtu.be') ? (
-                    <div className="absolute inset-0 bg-slate-900 flex items-center justify-center text-xs text-cyan-300 font-bold">
-                      YouTube Live Video Wallpaper Active
-                    </div>
-                  ) : (resolvedDesktopWallpaper.endsWith('.mp4') ||
-                      resolvedDesktopWallpaper.endsWith('.webm') ||
-                      resolvedDesktopWallpaper.includes('.mp4?') ||
-                      resolvedDesktopWallpaper.includes('.webm?') ||
-                      resolvedDesktopWallpaper.startsWith('data:video/mp4') ||
-                      resolvedDesktopWallpaper.startsWith('data:video/webm') ||
-                      resolvedDesktopWallpaper.startsWith('blob:') ||
-                      resolvedDesktopWallpaper.includes('/sample/')) &&
-                    !resolvedDesktopWallpaper.includes('unsplash.com') &&
-                    !resolvedDesktopWallpaper.startsWith('C:/') ? (
-                    <video
-                      src={resolvedDesktopWallpaper}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      muted
-                      loop
-                      autoPlay
-                      playsInline
-                      onError={(e) => {
-                        e.stopPropagation();
-                        (e.currentTarget as HTMLElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <img
-                      src={/^(?:file:\/\/|[a-z]:[\\/])/i.test(resolvedDesktopWallpaper) || !resolvedDesktopWallpaper
-                        ? '/downloads/Windows_11.jpg'
-                        : resolvedDesktopWallpaper}
-                      alt="Desktop Preview"
-                      referrerPolicy="no-referrer"
-                      className={`absolute inset-0 w-full h-full ${
-                        settings.wallpaperFit === 'fit'
-                          ? 'object-contain'
-                          : settings.wallpaperFit === 'stretch'
-                          ? 'object-fill'
-                          : settings.wallpaperFit === 'center'
-                          ? 'object-none'
-                          : 'object-cover'
-                      }`}
-                      onError={(event) => {
-                        if (event.currentTarget.src.endsWith('/downloads/Windows_11.jpg')) {
-                          event.currentTarget.style.display = 'none';
-                        } else {
-                          event.currentTarget.src = '/downloads/Windows_11.jpg';
-                        }
-                      }}
-                    />
-                  )
-                ) : (
-                  <div
-                    className={`absolute inset-0 ${
-                      staticWallpapers.find((w) => w.id === settings.wallpaper)?.preview || 'bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-950'
-                    }`}
-                  />
-                )}
+                <Wallpaper />
 
                 {/* Preview Desktop Icons */}
                 <div className="relative z-10 flex flex-col gap-2 w-16">

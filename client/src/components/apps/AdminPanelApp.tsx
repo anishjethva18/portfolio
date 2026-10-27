@@ -1031,7 +1031,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             <section className="admin-content-card w-full max-w-3xl space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex items-start gap-3">
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-700"><HardDrive size={19} /></span>
-                    <div><h2 className="text-base font-bold text-slate-900">Backup files</h2><p className="mt-1 text-xs text-slate-500">Download the latest backup or restore a JSON file.</p></div>
+                    <div><h2 className="text-base font-bold text-slate-900">Backup files</h2><p className="mt-1 text-xs text-slate-500">Compact backups include published and draft portfolio content, projects, and media used by them. Contacts, analytics, audit/revision history, and unused media are not included.</p></div>
                 </div>
                 
                 {backupStatus?.latest ? (
@@ -1039,7 +1039,11 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
                         <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Latest backup</div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-slate-800">
-                              {backupStatus.latest.type === 'full-portfolio-assets' ? 'Full portfolio & media backup' : 'Portfolio content backup'}
+                              {backupStatus.latest.scope === 'portfolio-only'
+                                ? 'Portfolio content & referenced media backup'
+                                : backupStatus.latest.type === 'full-portfolio-assets'
+                                  ? 'Full portfolio & media backup'
+                                  : 'Portfolio content backup'}
                             </span>
                             <time dateTime={backupStatus.latest.timestamp} className="text-xs text-slate-500">
                               {formatBackupDateTime(backupStatus.latest.timestamp)}
@@ -1058,7 +1062,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
                         className="admin-action-button inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         {isBackingUp ? <RefreshCw className="animate-spin" size={16} /> : <HardDrive size={16} />}
-                        {isBackingUp ? 'Creating backup…' : 'Create full backup'}
+                        {isBackingUp ? 'Creating backup…' : 'Create portfolio backup'}
                     </button>
                     <button
                         type="button"

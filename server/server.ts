@@ -9,7 +9,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import contactRouter from './routes/contact';
 import { browseRouter } from './routes/browse';
-import { filesRouter, hasMediaUrlReference } from './routes/files';
+import { filesRouter, hasMediaUrlReference, hasVisibleResumeMediaReference } from './routes/files';
 import { profileRouter } from './routes/profile';
 import { authRouter } from './routes/auth';
 import { tasksRouter } from './routes/tasks';
@@ -262,8 +262,7 @@ async function startServer() {
       const content = await getLivePortfolioContent();
       const profile = content.profile as Record<string, unknown> | undefined;
       const siteSettings = content.siteSettings as Record<string, unknown> | undefined;
-      const activeResumeReferences = Array.isArray(content.resumes)
-        && hasMediaUrlReference(content.resumes.filter((resume: any) => resume?.active === true), mediaUrl);
+      const visibleResumeReferences = hasVisibleResumeMediaReference(content.resumes, mediaUrl);
       const activeSkillIconReferences = getPublicSkillCategories(content.skills).some((category: any) =>
         category.skills.some((skill: any) => typeof skill.iconIdentifier === 'string' &&
           skill.iconIdentifier.startsWith('image:') &&
@@ -274,7 +273,7 @@ async function startServer() {
         siteSettings?.socialImageUrl,
         siteSettings?.faviconUrl,
         siteSettings?.defaultWallpaperUrl,
-      ], mediaUrl) || activeResumeReferences || activeSkillIconReferences;
+      ], mediaUrl) || visibleResumeReferences || activeSkillIconReferences;
       const projects = await ProjectModel.find({
         visible: { $ne: false },
       }).select('image screenshots').lean();

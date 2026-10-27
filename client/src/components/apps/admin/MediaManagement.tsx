@@ -455,10 +455,10 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
           : '';
 
   return (
-    <div className="w-full min-w-0 max-w-6xl space-y-4 pb-10" aria-busy={Boolean(mediaActivityMessage)}>
+    <div className="w-full min-w-0 max-w-6xl space-y-3 pb-6" aria-busy={Boolean(mediaActivityMessage)}>
       {mediaActivityMessage && <div role="status" aria-live="polite" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-medium text-sky-800"><LoaderCircle className="h-4 w-4 animate-spin" />{mediaActivityMessage} Your workspace remains available while this runs.</div>}
       {resumeMessage && <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700">{resumeMessage}</div>}
-      <section className="admin-content-card space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section className="admin-content-card space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h3 className="text-sm font-semibold text-slate-900">Resume files</h3><p className="mt-1 text-[11px] leading-relaxed text-slate-500">Add role specific PDFs, set which resumes appear in the CV app, and arrange their visitor selection order. Save draft, then publish to make changes live.</p></div>
           <button type="button" onClick={() => { setResumePage(Math.ceil((resumes.length + 1) / resumePageSize)); setResumes((current) => [...current, { id: `resume_${Date.now().toString(36)}`, title: '', file: '', active: false }]); }} disabled={resumeSaving} className="admin-action-button inline-flex h-9 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-[10px] font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Add resume</button>

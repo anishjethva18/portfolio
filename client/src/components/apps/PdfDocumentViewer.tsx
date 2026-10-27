@@ -26,6 +26,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
   const pinchStartDistanceRef = useRef<number | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [useNativeViewer, setUseNativeViewer] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -38,6 +39,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
     let pdfDocument: PDFDocumentProxy | undefined;
     let renderedWidth = 0;
     let renderGeneration = 0;
+    setUseNativeViewer(false);
 
     const renderDocument = async () => {
       const generation = ++renderGeneration;
@@ -98,6 +100,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
         if (!cancelled && generation === renderGeneration && !(error instanceof Error && error.name === 'RenderingCancelledException')) {
           console.error('Could not render PDF document.', error);
           setError('PDF preview could not be rendered.');
+          setUseNativeViewer(true);
           setLoading(false);
         }
       }
@@ -130,6 +133,19 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
   if (isExternal) {
     const externalUrl = `${url}${url.includes('#') ? '&' : '#'}toolbar=0&navpanes=0&scrollbar=1`;
     return <iframe src={externalUrl} title="PDF document" className={className} />;
+  }
+
+  if (useNativeViewer) {
+    return (
+      <div className={`relative flex min-h-0 flex-col ${className}`}>
+        <iframe src={url} title="PDF document" className="min-h-0 w-full flex-1 border-0" />
+        <div role="alert" className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-center text-xs text-rose-700">
+          <span>PDF preview could not be rendered by the in-app viewer.</span>
+          <a href={url} target="_blank" rel="noreferrer" className="font-semibold underline">Open PDF</a>
+          <a href={url} download className="font-semibold underline">Download PDF</a>
+        </div>
+      </div>
+    );
   }
 
   const updateGestureZoom = (delta: number) => {

@@ -713,11 +713,22 @@ export async function getGoogleOAuthAccessToken(
     error?: unknown;
   };
   if (!response.ok || typeof result.access_token !== 'string' || !result.access_token) {
-    const detail = typeof result.error_description === 'string'
+    const errorCode = typeof result.error === 'string' ? result.error : '';
+    const description = typeof result.error_description === 'string'
       ? result.error_description
-      : typeof result.error === 'string'
-        ? result.error
-        : `Google OAuth returned HTTP ${response.status}.`;
+      : '';
+    const detail = errorCode === 'invalid_grant'
+      ? 'Google rejected the refresh token (invalid_grant). It may be revoked or expired, created for a different OAuth client, or the consent screen may still be in Testing mode. Confirm the Gmail account and OAuth client ID/secret match the token, enable Gmail API access, then issue one new offline refresh token. If this is a deployed app, store it in the backend host environment and restart the service.'
+      : errorCode === 'invalid_client'
+        ? 'Google rejected the OAuth client credentials (invalid_client). Confirm the client ID and client secret belong to the same active Google Cloud OAuth client.'
+        : errorCode === 'unauthorized_client'
+          ? 'Google rejected this OAuth client for the refresh-token grant (unauthorized_client). Check the OAuth client type and Google Cloud consent configuration.'
+          : errorCode === 'invalid_request'
+            ? 'Google rejected the OAuth refresh request (invalid_request). Confirm the client ID, client secret, and refresh token are complete and belong to the same OAuth authorization.'
+            : [
+                errorCode || `HTTP ${response.status}`,
+                description && description !== 'Bad Request' ? description : '',
+              ].filter(Boolean).join(': ') || 'Google OAuth returned an invalid token response.';
     throw new Error(`Google OAuth token refresh failed: ${detail}`);
   }
   return result.access_token;
