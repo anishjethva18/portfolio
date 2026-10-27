@@ -1,0 +1,6 @@
+{
+  "name": "Windows 11 OS Portfolio",
+  "description": "A Windows 11-inspired full-stack portfolio with a responsive desktop, server-side administrator sessions, a virtual file system, File Explorer, Camera, Media, Settings, and portfolio apps.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

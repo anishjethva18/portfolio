@@ -1,0 +1,224 @@
+import { Router, Response } from 'express';
+import { createRateLimiter } from '../middleware/security';
+
+interface StockQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  changePercent: number;
+}
+
+interface StockQuoteResponse {
+  quotes: StockQuote[];
+  warnings: string[];
+  updatedAt: string;
+  stale?: boolean;
+}
+
+const STOCK_SYMBOLS = ['NVDA', 'GOOGL', 'MSFT'] as const;
+const CACHE_TTL_MS = 60_000;
+const quoteLimiter = createRateLimiter({
+  maxRequests: 30,
+  windowMs: 60_000,
+  message: 'Live market data refresh limit reached.',
+});
+const weatherLimiter = createRateLimiter({
+  maxRequests: 90,
+  windowMs: 60_000,
+  message: 'Weather refresh limit reached.',
+});
+const geocodingLimiter = createRateLimiter({
+  maxRequests: 60,
+  windowMs: 60_000,
+  message: 'Location search limit reached.',
+});
+
+export const widgetsRouter = Router();
+
+let cachedQuotes: StockQuoteResponse | null = null;
+let cacheExpiresAt = 0;
+const upstreamCache = new Map<string, { value: unknown; expiresAt: number }>();
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function fetchUpstreamJson(url: string, cacheKey: string, ttlMs = 60_000): Promise<unknown> {
+  const cached = upstreamCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  for (const [key, entry] of upstreamCache) {
+    if (entry.expiresAt <= Date.now()) upstreamCache.delete(key);
+  }
+  if (upstreamCache.size >= 150) {
+    const oldestKey = upstreamCache.keys().next().value;
+    if (oldestKey) upstreamCache.delete(oldestKey);
+  }
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'WindowsPortfolioWidgets/1.0' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error(`Upstream request failed (HTTP ${response.status}).`);
+  const value: unknown = await response.json();
+  upstreamCache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
+  return value;
+}
+
+async function fetchStockQuote(symbol: string): Promise<StockQuote> {
+  const response = await fetch(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1m`,
+    { headers: { 'User-Agent': 'WindowsPortfolioWidgets/1.0' }, signal: AbortSignal.timeout(8000) }
+  );
+  if (!response.ok) throw new Error(`Quote request failed (HTTP ${response.status}).`);
+
+  const payload = asRecord(await response.json());
+  const chart = asRecord(payload?.chart);
+  const result = Array.isArray(chart?.result) ? asRecord(chart.result[0]) : null;
+  const metadata = asRecord(result?.meta);
+  const indicator = Array.isArray(asRecord(result?.indicators)?.quote)
+    ? asRecord((asRecord(result?.indicators)?.quote as unknown[])[0])
+    : null;
+  const closeValues = Array.isArray(indicator?.close) ? indicator.close : [];
+  const lastClose = [...closeValues].reverse().find((value) => typeof value === 'number' && Number.isFinite(value));
+  const price = typeof metadata?.regularMarketPrice === 'number'
+    ? metadata.regularMarketPrice
+    : lastClose;
+  const previousClose = typeof metadata?.chartPreviousClose === 'number'
+    ? metadata.chartPreviousClose
+    : metadata?.previousClose;
+
+  if (
+    typeof price !== 'number' ||
+    !Number.isFinite(price) ||
+    typeof previousClose !== 'number' ||
+    !Number.isFinite(previousClose) ||
+    previousClose === 0
+  ) {
+    throw new Error('Quote response did not contain valid prices.');
+  }
+
+  const longName = metadata?.longName;
+  const shortName = metadata?.shortName;
+  return {
+    symbol,
+    name: typeof longName === 'string' ? longName : typeof shortName === 'string' ? shortName : symbol,
+    price,
+    changePercent: ((price - previousClose) / previousClose) * 100,
+  };
+}
+
+widgetsRouter.get('/weather', weatherLimiter, async (req, res: Response) => {
+  const latitude = Number(req.query.latitude);
+  const longitude = Number(req.query.longitude);
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    res.status(400).json({ success: false, error: 'A valid latitude and longitude are required.' });
+    return;
+  }
+
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&hourly=relative_humidity_2m,apparent_temperature,uv_index&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto`;
+  try {
+    res.json({ success: true, data: await fetchUpstreamJson(url, `weather:${latitude.toFixed(3)}:${longitude.toFixed(3)}`) });
+  } catch (error) {
+    console.error('[Widgets] Weather provider request failed.', error);
+    res.status(502).json({ success: false, error: 'Live weather is temporarily unavailable.' });
+  }
+});
+
+widgetsRouter.get('/geocoding/search', geocodingLimiter, async (req, res: Response) => {
+  const query = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+  if (query.length < 2 || query.length > 80) {
+    res.status(400).json({ success: false, error: 'Search city must contain 2 to 80 characters.' });
+    return;
+  }
+
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=en&format=json`;
+  try {
+    res.json({ success: true, data: await fetchUpstreamJson(url, `geocoding:search:${query.toLowerCase()}`, 5 * 60_000) });
+  } catch (error) {
+    console.error('[Widgets] City search provider request failed.', error);
+    res.status(502).json({ success: false, error: 'City search is temporarily unavailable.' });
+  }
+});
+
+widgetsRouter.get('/geocoding/reverse', geocodingLimiter, async (req, res: Response) => {
+  const latitude = Number(req.query.latitude);
+  const longitude = Number(req.query.longitude);
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    res.status(400).json({ success: false, error: 'A valid latitude and longitude are required.' });
+    return;
+  }
+
+  const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${latitude}&longitude=${longitude}&language=en&format=json`;
+  try {
+    res.json({ success: true, data: await fetchUpstreamJson(url, `geocoding:reverse:${latitude.toFixed(3)}:${longitude.toFixed(3)}`, 5 * 60_000) });
+  } catch (error) {
+    console.error('[Widgets] Reverse geocoding provider request failed.', error);
+    res.status(502).json({ success: false, error: 'Location details are temporarily unavailable.' });
+  }
+});
+
+widgetsRouter.get('/crypto', weatherLimiter, async (_req, res: Response) => {
+  const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h';
+  try {
+    res.json({ success: true, data: await fetchUpstreamJson(url, 'crypto:usd:btc,eth') });
+  } catch (error) {
+    console.error('[Widgets] Crypto provider request failed.', error);
+    res.status(502).json({ success: false, error: 'Live crypto quotes are temporarily unavailable.' });
+  }
+});
+
+widgetsRouter.get('/market', quoteLimiter, async (_req, res: Response) => {
+  if (cachedQuotes && Date.now() < cacheExpiresAt) {
+    res.json({ success: true, ...cachedQuotes });
+    return;
+  }
+
+  const settled = await Promise.allSettled(STOCK_SYMBOLS.map(fetchStockQuote));
+  const quotes = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  const warnings = settled.flatMap((result, index) => {
+    if (result.status === 'fulfilled') return [];
+    console.warn(`[Widgets] Stock quote refresh failed for ${STOCK_SYMBOLS[index]}.`, result.reason);
+    return [STOCK_SYMBOLS[index]];
+  });
+
+  if (!quotes.length && cachedQuotes) {
+    res.json({
+      success: true,
+      ...cachedQuotes,
+      stale: true,
+      warnings: ['Latest stock quotes could not be refreshed; showing the last successful prices.'],
+    });
+    return;
+  }
+  if (!quotes.length) {
+    res.status(502).json({
+      success: false,
+      error: 'Live stock quotes are temporarily unavailable.',
+      warnings,
+    });
+    return;
+  }
+
+  cachedQuotes = {
+    quotes,
+    warnings: warnings.length ? [`Stock quote unavailable: ${warnings.join(', ')}.`] : [],
+    updatedAt: new Date().toISOString(),
+  };
+  cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+  res.json({ success: true, ...cachedQuotes });
+});
