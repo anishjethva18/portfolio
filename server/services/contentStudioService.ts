@@ -215,6 +215,29 @@ function publicContent(value: unknown): Record<string, unknown> {
   return content;
 }
 
+function isPortfolioMediaPath(value: string): boolean {
+  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return false;
+  try {
+    const url = new URL(value, 'https://portfolio.local');
+    if (url.origin !== 'https://portfolio.local' || url.hash) return false;
+    const prefix = '/api/portfolio-media/';
+    if (!url.pathname.startsWith(prefix)) return false;
+    const filename = url.pathname.slice(prefix.length);
+    if (!filename || filename.includes('/')) return false;
+    const decodedFilename = decodeURIComponent(filename);
+    if (!decodedFilename || decodedFilename === '.' || decodedFilename === '..' ||
+      decodedFilename.includes('/') || decodedFilename.includes('\\')) return false;
+
+    const ids = url.searchParams.getAll('id');
+    if (ids.length === 0) return /^file-[A-Za-z0-9-]+$/.test(decodedFilename);
+    return ids.length === 1 &&
+      url.searchParams.size === 1 &&
+      /^file-[A-Za-z0-9-]+$/.test(ids[0]);
+  } catch {
+    return false;
+  }
+}
+
 function validateContent(content: Record<string, unknown>): string | null {
   if (!content.profile || typeof content.profile !== 'object' || Array.isArray(content.profile)) {
     return 'Content must include a profile object.';
@@ -287,7 +310,7 @@ function validateContent(content: Record<string, unknown>): string | null {
         (resume.file && !resume.file.startsWith('/') && !/^https?:\/\//i.test(resume.file)) ||
         resume.file.startsWith('//') || resume.file.includes('\\') ||
         resume.file.split('/').includes('..') ||
-        (resume.file.startsWith('/api/') && !/^\/api\/portfolio-media\/[A-Za-z0-9_-]+$/i.test(resume.file))) {
+        (resume.file.startsWith('/api/') && !isPortfolioMediaPath(resume.file))) {
         return `Resume ${index + 1} must have an http(s) URL or a local portfolio file path.`;
       }
       if (typeof resume.active !== 'boolean') return `Resume ${index + 1} active state must be true or false.`;
@@ -347,7 +370,7 @@ function validateContent(content: Record<string, unknown>): string | null {
     }
     if (imageUrl && !/^https?:\/\//i.test(imageUrl) &&
       (!imageUrl.startsWith('/') || imageUrl.startsWith('//') ||
-        (imageUrl.startsWith('/api/') && !/^\/api\/portfolio-media\/[A-Za-z0-9_-]+$/i.test(imageUrl)) ||
+        (imageUrl.startsWith('/api/') && !isPortfolioMediaPath(imageUrl)) ||
         imageUrl.includes('\\') || imageUrl.split('/').includes('..'))) {
       return `${label} URL must use http(s) or a public local portfolio path.`;
     }

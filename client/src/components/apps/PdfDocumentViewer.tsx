@@ -99,8 +99,17 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
       } catch (error) {
         if (!cancelled && generation === renderGeneration && !(error instanceof Error && error.name === 'RenderingCancelledException')) {
           console.error('Could not render PDF document.', error);
+          let nativePdfAvailable = false;
+          try {
+            const response = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+            nativePdfAvailable = response.ok &&
+              response.headers.get('content-type')?.toLowerCase().includes('application/pdf') === true;
+          } catch (probeError) {
+            console.warn('Could not verify the PDF response for the native viewer.', probeError);
+          }
+          if (cancelled || generation !== renderGeneration) return;
           setError('PDF preview could not be rendered.');
-          setUseNativeViewer(true);
+          setUseNativeViewer(nativePdfAvailable);
           setLoading(false);
         }
       }
@@ -133,6 +142,17 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
   if (isExternal) {
     const externalUrl = `${url}${url.includes('#') ? '&' : '#'}toolbar=0&navpanes=0&scrollbar=1`;
     return <iframe src={externalUrl} title="PDF document" className={className} />;
+  }
+
+  if (error && !useNativeViewer) {
+    return (
+      <div className={`grid min-h-0 place-items-center bg-slate-50 p-6 ${className}`}>
+        <div role="alert" className="max-w-md rounded-xl border border-rose-200 bg-white px-5 py-4 text-center text-sm text-slate-700 shadow-sm">
+          <p className="font-semibold text-rose-700">This PDF is unavailable.</p>
+          <p className="mt-1">The file could not be loaded or is not a valid PDF. Please ask the portfolio owner to check or upload the file again.</p>
+        </div>
+      </div>
+    );
   }
 
   if (useNativeViewer) {

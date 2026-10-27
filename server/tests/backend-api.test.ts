@@ -514,6 +514,22 @@ async function runTests() {
       assert(saved.published.profile.tagline !== edited.profile.tagline, 'Saving a draft leaves public portfolio content unchanged');
       assert(!('securitySettings' in saved.draft) && !JSON.stringify(saved.draft).includes('adminPinHash'), 'Content studio strips private security fields');
 
+      const withUploadedMedia = structuredClone(edited);
+      const uploadedPdfUrl = '/api/portfolio-media/Anish-Jethva-Full-Stack-Developer.pdf?id=file-test-media';
+      withUploadedMedia.resumes[0].file = uploadedPdfUrl;
+      withUploadedMedia.profile.resumeUrl = uploadedPdfUrl;
+      withUploadedMedia.siteSettings = {
+        ...((withUploadedMedia.siteSettings || {}) as Record<string, unknown>),
+        socialImageUrl: '/api/portfolio-media/profile%20picture%20(1).png?id=file-test-image',
+        faviconUrl: '/api/portfolio-media/favicon.png?id=file-test-favicon',
+      };
+      const savedMediaDraft: any = await contentStudioService.saveDraft(withUploadedMedia, actorId);
+      assert(
+        savedMediaDraft.draft.resumes[0].file === uploadedPdfUrl &&
+          savedMediaDraft.draft.siteSettings.socialImageUrl.includes('?id=file-test-image'),
+        'Uploaded portfolio media URLs with encoded filenames and IDs save in the private draft',
+      );
+
       const discarded: any = await contentStudioService.discardDraft(actorId);
       assert(discarded.draft.profile.tagline === baseline.profile.tagline && discarded.isPublished, 'Discard restores the published portfolio content as the draft');
       await contentStudioService.saveDraft(edited, actorId);
