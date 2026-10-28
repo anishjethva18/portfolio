@@ -71,7 +71,7 @@ export const AdminDashboardChart: React.FC<{
               id="admin-activity-range-options"
               role="listbox"
               aria-label="Activity date range options"
-              className={`absolute right-0 top-full z-30 mt-2 w-36 overflow-hidden rounded-xl border p-1.5 shadow-xl ring-1 ${isLight ? 'border-slate-200 bg-white ring-slate-900/5' : 'border-slate-700 bg-[#171e2b] ring-black/30'}`}
+              className={`absolute left-0 right-auto top-full z-30 mt-2 w-36 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border p-1.5 shadow-xl ring-1 sm:left-auto sm:right-0 ${isLight ? 'border-slate-200 bg-white ring-slate-900/5' : 'border-slate-700 bg-[#171e2b] ring-black/30'}`}
             >
               <p className={`px-2.5 pb-1.5 pt-1 text-[9px] font-bold uppercase tracking-wider ${isLight ? 'text-slate-400' : 'text-slate-500'}`}>Show activity</p>
               {ADMIN_ACTIVITY_RANGES.map((days) => (

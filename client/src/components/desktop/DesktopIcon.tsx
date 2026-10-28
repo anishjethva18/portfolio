@@ -37,7 +37,7 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({ iconItem, isSelected, 
         iconId: iconItem.id,
       });
     },
-    { threshold: 380, hapticFeedback: true }
+    { threshold: 600, hapticFeedback: true }
   );
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
@@ -64,6 +64,10 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({ iconItem, isSelected, 
   const defaultTop = PADDING_TOP + (iconItem.position?.gridY || 0) * CELL_HEIGHT;
 
   const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+  const pointerStartRef = useRef({ x: 0, y: 0 });
+  const pointerDownRef = useRef(false);
+  const dragReadyRef = useRef(false);
 
   const executeAction = useCallback(() => {
     haptics.light();
@@ -184,27 +188,81 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({ iconItem, isSelected, 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0 || isRenaming) return;
     const rect = e.currentTarget.getBoundingClientRect();
+    pointerDownRef.current = true;
+    dragReadyRef.current = false;
+    pointerStartRef.current = { x: e.clientX, y: e.clientY };
     setDragOffset({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
     });
-    setIsDragging(true);
+    holdTimerRef.current = window.setTimeout(() => {
+      if (pointerDownRef.current) {
+        dragReadyRef.current = true;
+        setIsDragging(true);
+      }
+    }, 400);
   };
 
   const handleTouchStartCustom = (e: React.TouchEvent) => {
     if (isRenaming) return;
     const touch = e.touches[0];
     const rect = e.currentTarget.getBoundingClientRect();
+    pointerDownRef.current = true;
+    dragReadyRef.current = false;
+    pointerStartRef.current = { x: touch.clientX, y: touch.clientY };
     setDragOffset({
       x: touch.clientX - rect.left,
       y: touch.clientY - rect.top,
     });
-    setIsDragging(true);
+    holdTimerRef.current = window.setTimeout(() => {
+      if (pointerDownRef.current) {
+        dragReadyRef.current = true;
+        setIsDragging(true);
+      }
+    }, 420);
+  };
+
+  const handleTouchMoveCustom = (e: React.TouchEvent) => {
+    longPressProps.onTouchMove(e);
+    if (!pointerDownRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const moved = Math.hypot(
+      touch.clientX - pointerStartRef.current.x,
+      touch.clientY - pointerStartRef.current.y
+    );
+    if (moved <= 32) return;
+    if (!dragReadyRef.current) {
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+      pointerDownRef.current = false;
+      return;
+    }
+    e.preventDefault();
+    setCustomPos({
+      x: Math.max(0, Math.min(window.innerWidth - 90, touch.clientX - dragOffset.x)),
+      y: Math.max(0, Math.min(window.innerHeight - 100, touch.clientY - dragOffset.y)),
+    });
+  };
+
+  const cancelUnheldPress = (x: number, y: number) => {
+    if (!pointerDownRef.current || dragReadyRef.current) return;
+    if (Math.hypot(x - pointerStartRef.current.x, y - pointerStartRef.current.y) <= 8) return;
+    if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = null;
+    pointerDownRef.current = false;
+  };
+
+  const handlePressEnd = () => {
+    if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = null;
+    pointerDownRef.current = false;
+    if (!dragReadyRef.current) setIsDragging(false);
   };
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
+      if (Math.hypot(e.clientX - pointerStartRef.current.x, e.clientY - pointerStartRef.current.y) <= 12) return;
       setCustomPos({
         x: Math.max(0, Math.min(window.innerWidth - 90, e.clientX - dragOffset.x)),
         y: Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffset.y)),
@@ -212,8 +270,9 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({ iconItem, isSelected, 
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (!isDragging) return;
+      if (!isDragging || e.touches.length !== 1) return;
       const touch = e.touches[0];
+      if (Math.hypot(touch.clientX - pointerStartRef.current.x, touch.clientY - pointerStartRef.current.y) <= 32) return;
       setCustomPos({
         x: Math.max(0, Math.min(window.innerWidth - 90, touch.clientX - dragOffset.x)),
         y: Math.max(0, Math.min(window.innerHeight - 100, touch.clientY - dragOffset.y)),
@@ -277,12 +336,18 @@ export const DesktopIcon: React.FC<DesktopIconProps> = ({ iconItem, isSelected, 
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onMouseDown={handleMouseDown}
+      onMouseMove={(e) => cancelUnheldPress(e.clientX, e.clientY)}
+      onMouseUp={handlePressEnd}
+      onMouseLeave={(e) => {
+        if (e.buttons === 0) handlePressEnd();
+      }}
       onTouchStart={(e) => {
         longPressProps.onTouchStart(e);
         handleTouchStartCustom(e);
       }}
-      onTouchMove={longPressProps.onTouchMove}
+      onTouchMove={handleTouchMoveCustom}
       onTouchEnd={(e) => {
+        handlePressEnd();
         const wasLongPress = longPressProps.didTriggerLongPress();
         longPressProps.onTouchEnd(e);
         if (wasLongPress) {

@@ -378,6 +378,8 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ windowId, init
   }, []);
 
   const isNarrowContainer = containerWidth < 540;
+  const isNarrowContainerRef = useRef(isNarrowContainer);
+  isNarrowContainerRef.current = isNarrowContainer;
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -730,6 +732,7 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ windowId, init
     });
     setSelectedFile(null);
     setSelectedFileIds(new Set());
+    if (isNarrowContainerRef.current) setIsSidebarVisible(false);
   }, [updateActiveTab]);
 
   useEffect(() => {
@@ -2933,8 +2936,8 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ windowId, init
                             e.stopPropagation();
                             setSelectedFile(driveFile);
                             setSelectedFileIds(new Set([driveFile.id]));
+                            navigateTo(drive.path);
                           }}
-                          onDoubleClick={() => navigateTo(drive.path)}
                           onKeyDown={(e) => {
                             if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
                               e.preventDefault();
@@ -3224,12 +3227,12 @@ export const FileExplorerApp: React.FC<FileExplorerAppProps> = ({ windowId, init
                                 ? 'border-blue-500 bg-blue-500/15 dark:bg-blue-500/20'
                                 : 'border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 hover:border-blue-500 dark:hover:border-blue-500/80 hover:bg-blue-500/5'
                             }`}
-                            onDoubleClick={() => navigateTo(drive.path)}
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedFile(driveFile);
                               setSelectedFileIds(new Set([driveFile.id]));
                             }}
+                            onDoubleClick={() => navigateTo(drive.path)}
                             onKeyDown={(e) => {
                               if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
                                 e.preventDefault();

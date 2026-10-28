@@ -203,6 +203,41 @@ async function startServer() {
   app.use('/api/admin/content-studio', contentStudioRouter);
   app.use('/api/admin', adminRouter);
 
+  app.get('/api/seo-metadata', async (_req, res) => {
+    try {
+      const content = await getLivePortfolioContent();
+      const settings = content.siteSettings || {};
+      const profile = content.profile || {};
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        success: true,
+        content: {
+          profile: {
+            name: profile.name,
+            title: profile.title,
+            bio: profile.bio,
+            avatar: profile.avatar,
+          },
+          siteSettings: {
+            siteName: settings.siteName,
+            siteTitle: settings.siteTitle,
+            metaDescription: settings.metaDescription,
+            faviconUrl: settings.faviconUrl,
+            socialImageUrl: settings.socialImageUrl,
+            openGraphTitle: settings.openGraphTitle,
+            openGraphDescription: settings.openGraphDescription,
+            canonicalUrl: settings.canonicalUrl,
+            twitterCard: settings.twitterCard,
+            twitterTitle: settings.twitterTitle,
+            twitterDescription: settings.twitterDescription,
+          },
+        },
+      });
+    } catch {
+      res.status(503).json({ success: false, error: 'Published SEO metadata could not be loaded.' });
+    }
+  });
+
   // Live dynamic portfolio content for all visitors (no redeploy needed)
   app.get('/api/portfolio-content', async (req, res) => {
     try {

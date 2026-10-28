@@ -15,10 +15,23 @@ export const Wallpaper: React.FC = () => {
     return matchingFile?.content || customWallpaperUrl;
   }, [customWallpaperUrl, files]);
   const isLocalFileReference = /^(?:file:\/\/|[a-z]:[\\/])/i.test(resolvedUrl);
+  const fallbackWallpaper = '/downloads/Windows_11.jpg';
 
   useEffect(() => {
     setLoadError(false);
   }, [resolvedUrl, wallpaper]);
+
+  if (wallpaper === 'custom' && (loadError || !resolvedUrl || isLocalFileReference)) {
+    return (
+      <div className="absolute inset-0 z-0 overflow-hidden bg-slate-950">
+        <img
+          src={fallbackWallpaper}
+          alt="Default desktop wallpaper"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
 
   if (wallpaper === 'custom' && resolvedUrl && !loadError && !isLocalFileReference) {
     // 1. YouTube video detection (watch, share, embed, shorts)
@@ -29,6 +42,7 @@ export const Wallpaper: React.FC = () => {
       const ytId = ytMatch[1];
       return (
         <div className="absolute inset-0 overflow-hidden pointer-events-none z-0 bg-black">
+          <img src={fallbackWallpaper} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
           <iframe
             src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=1&loop=1&playlist=${ytId}&controls=0&showinfo=0&autohide=1&modestbranding=1&enablejsapi=1&iv_load_policy=3`}
             allow="autoplay; encrypted-media"
@@ -56,6 +70,7 @@ export const Wallpaper: React.FC = () => {
     if (isVideo) {
       return (
         <div className="absolute inset-0 overflow-hidden pointer-events-none z-0 bg-slate-950">
+          <img src={fallbackWallpaper} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
           <video
             autoPlay
             loop
@@ -85,6 +100,7 @@ export const Wallpaper: React.FC = () => {
     if (isLiveWebPage) {
       return (
         <div className="absolute inset-0 overflow-hidden pointer-events-none z-0 bg-slate-950">
+          <img src={fallbackWallpaper} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
           <iframe
             src={resolvedUrl}
             title="Live Interactive Wallpaper"
@@ -108,6 +124,7 @@ export const Wallpaper: React.FC = () => {
 
     return (
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0 bg-slate-950">
+        <img src={fallbackWallpaper} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
         <img
           src={resolvedUrl}
           alt="Desktop Wallpaper"

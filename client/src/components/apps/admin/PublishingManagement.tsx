@@ -28,6 +28,7 @@ interface Revision {
 
 interface PublishingManagementProps {
   apiFetch: (url: string, options?: RequestInit) => Promise<Response>;
+  active?: boolean;
   canPublish?: boolean;
   onSuccess: (message: string) => void;
   onError: (message: string) => void;
@@ -61,7 +62,12 @@ const changeFields: Record<string, string> = {
   twitter: 'X / Twitter', socialLinks: 'Additional links', goals: 'Focus areas', defaultTheme: 'Default theme', defaultWallpaper: 'Default wallpaper',
   defaultWallpaperUrl: 'Uploaded wallpaper', defaultIconTheme: 'Icon theme', defaultAccentColor: 'Accent color',
   emailFaviconEnabled: 'Email favicon in emails', socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
-  siteTitle: 'Page title', metaDescription: 'Meta description', maintenanceMode: 'Maintenance mode',
+  siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
+  portfolioVersion: 'Portfolio version',
+  openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
+  canonicalUrl: 'Canonical URL', twitterCard: 'Twitter/X card type',
+  twitterTitle: 'Twitter/X title', twitterDescription: 'Twitter/X description',
+  maintenanceMode: 'Maintenance mode',
   desktopShortcuts: 'Apps & shortcuts', taskbarPinnedApps: 'Taskbar pins', startPinnedApps: 'Start menu pins',
   adminAppEnabledInStart: 'Admin Start menu visibility', disabledApps: 'Available apps',
   role: 'Role', company: 'Company', period: 'Period', description: 'Description', institution: 'Institution',
@@ -221,7 +227,7 @@ function getProjectChanges(draftValue: any[], publishedValue: any[]): string[] {
   return changes;
 }
 
-export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiFetch, canPublish = false, onSuccess, onError, onStatusChange }) => {
+export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiFetch, active = true, canPublish = false, onSuccess, onError, onStatusChange }) => {
   const confirm = useConfirmDialog();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [projectsMatch, setProjectsMatch] = useState<boolean | null>(null);
@@ -266,15 +272,15 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
     setLoadError(null);
     try {
       const [state, revisionData, draftProjectsResponse] = await Promise.all([
-        request(''),
-        request('/revisions'),
-        apiFetch('/api/admin/projects'),
+        request('', { cache: 'no-store' }),
+        request('/revisions', { cache: 'no-store' }),
+        apiFetch('/api/admin/projects', { cache: 'no-store' }),
       ]);
       const draftProjects = await draftProjectsResponse.json();
       if (!draftProjectsResponse.ok || !draftProjects.success || !Array.isArray(draftProjects.projects)) throw new Error(draftProjects.error || 'Staged projects could not be loaded.');
       const liveProjects = Array.isArray(draftProjects.publishedProjects)
         ? draftProjects.publishedProjects
-        : await apiFetch('/api/projects').then(async (response) => {
+        : await apiFetch('/api/projects', { cache: 'no-store' }).then(async (response) => {
             const data = await response.json();
             if (!response.ok || !data.success || !Array.isArray(data.projects)) throw new Error(data.error || 'Published projects could not be loaded.');
             return data.projects;
@@ -293,10 +299,14 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
     }
   }, [request]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (active) void load();
+  }, [active, load]);
   const hasUnpublishedChanges = Boolean(
     snapshot &&
-      (getContentState(snapshot.draft) !== getContentState(snapshot.published) || projectsMatch === false),
+      ((typeof snapshot.isPublished === 'boolean'
+        ? !snapshot.isPublished
+        : getContentState(snapshot.draft) !== getContentState(snapshot.published)) || projectsMatch === false),
   );
   const draftChanges = [...(snapshot ? getChangedFields(snapshot.published, snapshot.draft) : []), ...projectDraftChanges];
   const revisionPageCount = Math.max(1, Math.ceil(revisions.length / revisionPageSize));
@@ -332,7 +342,16 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
       message: 'This makes the saved content and staged project changes public.',
       confirmLabel: 'Publish changes',
     })) return;
-    await runAction('/publish', 'Portfolio content and staged projects were published.');
+    const contentChanged = Boolean(snapshot && getContentState(snapshot.draft) !== getContentState(snapshot.published));
+    const projectsChanged = projectsMatch === false;
+    const successMessage = contentChanged && projectsChanged
+      ? 'Portfolio content and project changes were published.'
+      : projectsChanged
+        ? 'Project changes were published.'
+        : contentChanged
+          ? 'Portfolio content changes were published.'
+          : 'Portfolio is already up to date.';
+    await runAction('/publish', successMessage);
   };
 
   const discard = async () => {

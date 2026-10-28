@@ -126,6 +126,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   const [projectFormDirty, setProjectFormDirty] = useState(false);
   const [projectsDirty, setProjectsDirty] = useState(false);
   const [draftSavedAfterChanges, setDraftSavedAfterChanges] = useState(false);
+  const draftAvailabilityRequestRef = useRef(0);
   const pendingProjectDraftIds = useRef<Set<string>>(new Set());
   const savePendingProjectsRef = useRef<() => Promise<void>>(async () => undefined);
   const [hasUnpublishedDraft, setHasUnpublishedDraft] = useState<boolean | null>(null);
@@ -201,11 +202,12 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
     return registerWindowCloseGuard(windowId, handleCloseAdminWindow);
   }, [windowId, registerWindowCloseGuard, handleCloseAdminWindow]);
 
-  const fetchDraftAvailability = async () => {
+  const fetchDraftAvailability = async (throwOnError = false) => {
+    const requestId = ++draftAvailabilityRequestRef.current;
     try {
       const [snapshotResponse, draftProjectsResponse] = await Promise.all([
-        apiFetch('/api/admin/content-studio'),
-        apiFetch('/api/admin/projects'),
+        apiFetch('/api/admin/content-studio', { cache: 'no-store' }),
+        apiFetch('/api/admin/projects', { cache: 'no-store' }),
       ]);
       const [snapshot, draftProjects] = await Promise.all([
         snapshotResponse.json(),
@@ -217,7 +219,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       }
       const liveProjects = Array.isArray(draftProjects.publishedProjects)
         ? draftProjects.publishedProjects
-        : await apiFetch('/api/projects').then(async (response) => {
+        : await apiFetch('/api/projects', { cache: 'no-store' }).then(async (response) => {
             const data = await response.json();
             if (!response.ok || !data.success || !Array.isArray(data.projects)) {
               throw new Error(data.error || 'Published project status could not be loaded.');
@@ -225,12 +227,19 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             return data.projects;
           });
       const hasUnpublishedChanges =
-        getContentState(snapshot.draft) !== getContentState(snapshot.published) ||
+        (typeof snapshot.isPublished === 'boolean'
+          ? !snapshot.isPublished
+          : getContentState(snapshot.draft) !== getContentState(snapshot.published)) ||
         getProjectState(draftProjects.projects) !== getProjectState(liveProjects);
-      setHasUnpublishedDraft(hasUnpublishedChanges);
+      if (requestId === draftAvailabilityRequestRef.current) {
+        setHasUnpublishedDraft(hasUnpublishedChanges);
+      }
       return hasUnpublishedChanges;
     } catch (err: any) {
-      setError(err.message || 'Draft status could not be loaded.');
+      if (requestId === draftAvailabilityRequestRef.current) {
+        setError(err.message || 'Draft status could not be loaded.');
+      }
+      if (throwOnError) throw err;
       return false;
     }
   };
@@ -612,7 +621,8 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       else allSaved = false;
     }
     setProjectsDirty(pendingProjectDraftIds.current.size > 0);
-    if (allSaved && ids.length) setSuccessMsg('Project changes saved to draft. Publish to apply them to the live Projects app.');
+    if (!allSaved) throw new Error('Some project changes could not be saved. Review the project error and try Save draft again.');
+    if (ids.length) setSuccessMsg('Project changes saved to draft. Publish to apply them to the live Projects app.');
   };
   savePendingProjectsRef.current = savePendingProjectChanges;
 
@@ -924,14 +934,27 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       user={user}
       onLogout={handleLogout}
       onSaveDraft={async () => {
-        const actions = new Map<string, () => Promise<void>>();
-        window.dispatchEvent(new CustomEvent<AdminDraftSaveDetail>('admin-save-content-draft', {
-          detail: { register: (key, save) => actions.set(key, save) },
-        }));
-        for (const key of ['portfolio', 'media', 'advanced', 'project-form', 'project-staging']) {
-          await actions.get(key)?.();
+        setError(null);
+        try {
+          const actions = new Map<string, () => Promise<void>>();
+          window.dispatchEvent(new CustomEvent<AdminDraftSaveDetail>('admin-save-content-draft', {
+            detail: { register: (key, save) => actions.set(key, save) },
+          }));
+          if (draftDirtySections.portfolio && !actions.has('portfolio')) {
+            throw new Error('Portfolio draft editor is not ready to save. Reopen the SEO section and try again.');
+          }
+          for (const key of ['portfolio', 'media', 'advanced', 'project-form', 'project-staging']) {
+            await actions.get(key)?.();
+          }
+          setDraftDirtySections({ portfolio: false, media: false, advanced: false });
+          setProjectFormDirty(false);
+          setProjectsDirty(false);
+          setHasUnpublishedDraft(true);
+          setDraftSavedAfterChanges(true);
+          void fetchDraftAvailability();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Draft changes could not be saved.');
         }
-        if (actions.size) await markCurrentDraftAsSaved();
       }}
       onDiscardUnsavedChanges={() => window.dispatchEvent(new Event('admin-discard-unsaved-edits'))}
       canSaveDraft={draftDirty || projectFormDirty || projectsDirty}
@@ -1022,7 +1045,11 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             initialSection="profile"
             requestedSection={activeTab === 'appearance' || activeTab === 'seo' ? activeTab : activeTab === 'portfolio' ? 'profile' : undefined}
             onDraftChange={reportPortfolioDirty}
-            onSaveSuccess={() => { fetchProjects(); void markCurrentDraftAsSaved(); }}
+            onDraftSaved={(hasChanges) => {
+              setHasUnpublishedDraft(hasChanges);
+              setDraftDirtySections((current) => ({ ...current, portfolio: false }));
+            }}
+            onSaveSuccess={() => { fetchProjects(); }}
           />
         </div>
         <div className={activeTab === 'media' ? 'block' : 'hidden'}>
@@ -1050,7 +1077,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             }} />
         </div>
         <div className={activeTab === 'publishing' ? 'block' : 'hidden'}>
-          <PublishingManagement apiFetch={apiFetch} canPublish={Boolean(hasUnpublishedDraft && !draftDirty && !projectsDirty)} onSuccess={(message) => setSuccessMsg(message)} onError={(message) => setError(message)} onStatusChange={(hasChanges) => { setHasUnpublishedDraft(hasChanges); if (!hasChanges) setDraftSavedAfterChanges(false); }} />
+          <PublishingManagement active={activeTab === 'publishing'} apiFetch={apiFetch} canPublish={Boolean(hasUnpublishedDraft && !draftDirty && !projectsDirty)} onSuccess={(message) => setSuccessMsg(message)} onError={(message) => setError(message)} onStatusChange={(hasChanges) => { setHasUnpublishedDraft(hasChanges); if (!hasChanges) setDraftSavedAfterChanges(false); }} />
         </div>
         <div className={activeTab === 'security' ? 'block' : 'hidden'}>
           <SecurityManagement

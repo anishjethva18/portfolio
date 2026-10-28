@@ -182,7 +182,12 @@ export const AdminPanelLayout: React.FC<{
 
       {/* Mobile Drawer Backdrop & Sidebar */}
       {mobileMenuOpen && (
-        <div className="absolute inset-0 z-50 flex lg:hidden bg-black/70 backdrop-blur-sm animate-fadeIn">
+        <div
+          className="absolute inset-0 z-50 flex lg:hidden bg-black/70 backdrop-blur-sm animate-fadeIn"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setMobileMenuOpen(false);
+          }}
+        >
           <div className="admin-mobile-drawer h-full w-[min(18rem,90%)] max-w-full bg-white border-r border-slate-200 flex flex-col p-4 pb-safe-home">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-2">
@@ -232,9 +237,9 @@ export const AdminPanelLayout: React.FC<{
       )}
 
       {/* Main Content Area */}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="sticky top-0 z-20 flex min-h-[60px] items-center justify-between gap-2 border-b border-slate-200/80 bg-white/90 px-2.5 backdrop-blur-xl sm:min-h-[68px] sm:gap-3 sm:px-7">
+        <header className="relative z-10 flex min-h-[60px] shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-2.5 sm:min-h-[68px] sm:gap-3 sm:px-7">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -279,7 +284,7 @@ export const AdminPanelLayout: React.FC<{
         </header>
 
         {/* View Content */}
-        <main className={`admin-panel-scroll min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-auto p-4 md:p-7 ${theme === 'dark' ? 'bg-[#0b0e14] text-slate-100' : 'bg-gradient-to-br from-[#f5faff] via-[#f8fbff] to-[#edf6ff] text-slate-800'}`}>
+        <main className={`admin-panel-scroll h-0 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-auto p-4 md:p-7 ${theme === 'dark' ? 'bg-[#0b0e14] text-slate-100' : 'bg-gradient-to-br from-[#f5faff] via-[#f8fbff] to-[#edf6ff] text-slate-800'}`}>
           {pageHeadingTab && (
             <div className="admin-page-heading mx-0 flex w-full min-w-0 max-w-[1430px] items-end justify-between gap-5 pb-5 pt-2">
               <div>

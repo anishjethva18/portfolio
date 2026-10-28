@@ -35,7 +35,12 @@ const CHANGE_FIELDS: Record<string, string> = {
   socialLinks: 'Additional links', defaultTheme: 'Default theme', defaultWallpaper: 'Default wallpaper',
   defaultWallpaperUrl: 'Uploaded wallpaper', defaultIconTheme: 'Icon theme', defaultAccentColor: 'Accent color',
   emailFaviconEnabled: 'Email favicon in emails', socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
-  siteTitle: 'Page title', metaDescription: 'Meta description', maintenanceMode: 'Maintenance mode',
+  siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
+  portfolioVersion: 'Portfolio version',
+  openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
+  canonicalUrl: 'Canonical URL', twitterCard: 'Twitter card type',
+  twitterTitle: 'Twitter title', twitterDescription: 'Twitter description',
+  maintenanceMode: 'Maintenance mode',
   desktopShortcuts: 'Apps & shortcuts', taskbarPinnedApps: 'Taskbar pins', startPinnedApps: 'Start menu pins',
   adminAppEnabledInStart: 'Admin Start menu visibility', disabledApps: 'Available apps',
   role: 'Role', company: 'Company', period: 'Period', description: 'Description',
@@ -106,6 +111,12 @@ export function summarizeChanges(before: unknown, after: unknown): string[] {
     if (field === 'maintenanceMode') return value ? 'On' : 'Off';
     return value ? 'Enabled' : 'Disabled';
   };
+  const describeValue = (value: unknown): string => {
+    if (value === undefined || value === null || value === '') return '(empty)';
+    if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+    const text = String(value).replace(/\s+/g, ' ').trim();
+    return text.length > 100 ? `${text.slice(0, 97)}…` : text;
+  };
   const visit = (oldValue: unknown, newValue: unknown, path: string[]) => {
     if (stableContentState(oldValue) === stableContentState(newValue)) return;
     const key = path[path.length - 1] || '';
@@ -162,6 +173,13 @@ export function summarizeChanges(before: unknown, after: unknown): string[] {
     }
     if (typeof oldValue === 'boolean' && typeof newValue === 'boolean') {
       changes.add(`${formatChangePath(path)}: ${describeBoolean(key, oldValue)} → ${describeBoolean(key, newValue)}`);
+      return;
+    }
+    if (
+      (oldValue === undefined || oldValue === null || ['string', 'number'].includes(typeof oldValue)) &&
+      (newValue === undefined || newValue === null || ['string', 'number'].includes(typeof newValue))
+    ) {
+      changes.add(`${formatChangePath(path)}: ${describeValue(oldValue)} → ${describeValue(newValue)}`);
       return;
     }
     changes.add(formatChangePath(path));
@@ -362,17 +380,58 @@ function validateContent(content: Record<string, unknown>): string | null {
   if (siteSettings?.adminAppEnabledInStart !== undefined && typeof siteSettings.adminAppEnabledInStart !== 'boolean') {
     return 'Admin Start menu visibility must be true or false.';
   }
+  const textLimits = [
+    ['siteName', 160, 'Site name'],
+    ['siteTitle', 120, 'Page title'],
+    ['metaDescription', 320, 'Meta description'],
+    ['openGraphTitle', 120, 'Open Graph title'],
+    ['openGraphDescription', 320, 'Open Graph description'],
+    ['twitterTitle', 120, 'Twitter title'],
+    ['twitterDescription', 320, 'Twitter description'],
+  ] as const;
+  for (const [field, maxLength, label] of textLimits) {
+    const value = siteSettings?.[field];
+    if (value !== undefined && (typeof value !== 'string' || value.length > maxLength)) {
+      return `${label} must be text no longer than ${maxLength} characters.`;
+    }
+  }
+  if (siteSettings?.twitterCard !== undefined &&
+    siteSettings.twitterCard !== 'summary' && siteSettings.twitterCard !== 'summary_large_image') {
+    return 'Twitter card type must be summary or summary_large_image.';
+  }
   for (const [field, label] of [['socialImageUrl', 'Social preview image'], ['faviconUrl', 'Favicon']] as const) {
     const imageUrl = siteSettings?.[field];
     if (imageUrl === undefined) continue;
     if (typeof imageUrl !== 'string' || imageUrl.length > 2048) {
       return `${label} URL must be text no longer than 2,048 characters.`;
     }
-    if (imageUrl && !/^https?:\/\//i.test(imageUrl) &&
-      (!imageUrl.startsWith('/') || imageUrl.startsWith('//') ||
-        (imageUrl.startsWith('/api/') && !isPortfolioMediaPath(imageUrl)) ||
-        imageUrl.includes('\\') || imageUrl.split('/').includes('..'))) {
+    if (!imageUrl) continue;
+    if (imageUrl.startsWith('/')) {
+      if (imageUrl.startsWith('//') || imageUrl.includes('\\') || imageUrl.split('/').includes('..') ||
+        (imageUrl.startsWith('/api/') && !isPortfolioMediaPath(imageUrl))) {
+        return `${label} URL must use http(s) or a public local portfolio path.`;
+      }
+      continue;
+    }
+    try {
+      const parsed = new URL(imageUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+    } catch {
       return `${label} URL must use http(s) or a public local portfolio path.`;
+    }
+  }
+  const canonicalUrl = siteSettings?.canonicalUrl;
+  if (canonicalUrl !== undefined) {
+    if (typeof canonicalUrl !== 'string' || canonicalUrl.length > 2048) {
+      return 'Canonical URL must be text no longer than 2,048 characters.';
+    }
+    if (canonicalUrl) {
+      try {
+        const parsed = new URL(canonicalUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+      } catch {
+        return 'Canonical URL must be an absolute http(s) URL.';
+      }
     }
   }
   if (Buffer.byteLength(JSON.stringify(content), 'utf8') > MAX_CONTENT_BYTES) {
@@ -413,7 +472,7 @@ export class ContentStudioService {
     };
   }
 
-  public async saveDraft(content: unknown, userId: string): Promise<ContentStudioSnapshot> {
+  public async saveDraft(content: unknown, userId: string, publishedFallback: unknown = {}): Promise<ContentStudioSnapshot> {
     requireMongo();
     const safeContent = publicContent(content);
     const validationError = validateContent(safeContent);
@@ -424,7 +483,7 @@ export class ContentStudioService {
       { $set: { content: safeContent, updatedBy: userId } },
       { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true }
     );
-    return this.getSnapshot(safeContent);
+    return this.getSnapshot(publishedFallback);
   }
 
   public async discardDraft(userId: string): Promise<ContentStudioSnapshot> {

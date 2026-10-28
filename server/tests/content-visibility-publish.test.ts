@@ -16,6 +16,17 @@ async function run() {
   );
   assert.deepEqual(
     summarizeChanges(
+      { siteSettings: { siteName: 'Old name', canonicalUrl: 'https://old.example.test/' } },
+      { siteSettings: { siteName: 'New name', canonicalUrl: '' } },
+    ),
+    [
+      'Site & Appearance · Site name: Old name → New name',
+      'Site & Appearance · Canonical URL: https://old.example.test/ → (empty)',
+    ],
+    'SEO edits and removals are tracked in the shared publish history',
+  );
+  assert.deepEqual(
+    summarizeChanges(
       { profile: { contactVisibility: { email: false } } },
       { profile: { contactVisibility: { email: true } } },
     ),
@@ -56,14 +67,34 @@ async function run() {
       education: [{ degree: 'Hidden degree', institution: 'Test', period: '2025', details: '', visible: false }],
       certifications: [{ title: 'Hidden certificate', visible: false }],
       capabilities: [{ title: 'Hidden capability', icon: 'Sparkles', description: '', visible: false }],
+      siteSettings: {
+        siteName: 'Published SEO Test',
+        siteTitle: 'Published SEO page title',
+        metaDescription: 'Published SEO description.',
+        openGraphTitle: 'Published Open Graph title',
+        openGraphDescription: 'Published Open Graph description.',
+        canonicalUrl: 'https://portfolio.example.test/',
+        faviconUrl: '/api/portfolio-media/favicon.png?id=file-seo-test',
+        socialImageUrl: 'https://portfolio.example.test/social.png',
+        twitterCard: 'summary_large_image',
+        twitterTitle: 'Published Twitter title',
+        twitterDescription: 'Published Twitter description.',
+      },
     };
 
-    await contentStudioService.saveDraft(content, 'visibility-test');
+    const publishedFallback = {
+      ...content,
+      siteSettings: { ...content.siteSettings, siteName: 'Previously published site name' },
+    };
+    const savedSnapshot = await contentStudioService.saveDraft(content, 'visibility-test', publishedFallback);
+    assert.equal(savedSnapshot.isPublished, false, 'Saving changed SEO settings reports unpublished changes');
     const publishedSnapshot = await contentStudioService.publishDraft('visibility-test');
+    assert.equal(publishedSnapshot.isPublished, true, 'Publishing clears the unpublished state');
     const refreshedSnapshot = await contentStudioService.getSnapshot({});
 
     for (const snapshot of [publishedSnapshot, refreshedSnapshot]) {
       const published = snapshot.published as any;
+      const draft = snapshot.draft as any;
       assert.equal(published.profile.contactVisibility.email, false);
       assert.equal(published.profile.contactVisibility.phone, false);
       assert.equal(published.profile.contactVisibility.location, false);
@@ -78,9 +109,48 @@ async function run() {
       assert.equal(published.capabilities[0].visible, false);
       assert.equal((snapshot.draft as any).profile.contactVisibility.email, false);
       assert.equal((snapshot.draft as any).capabilities[0].visible, false);
+      assert.equal((snapshot.published as any).siteSettings.siteName, 'Published SEO Test');
+      assert.equal((snapshot.published as any).siteSettings.canonicalUrl, 'https://portfolio.example.test/');
+      assert.equal((snapshot.published as any).siteSettings.twitterCard, 'summary_large_image');
+      for (const savedContent of [published, draft]) {
+        assert.equal(savedContent.siteSettings.siteName, 'Published SEO Test');
+        assert.equal(savedContent.siteSettings.siteTitle, 'Published SEO page title');
+        assert.equal(savedContent.siteSettings.metaDescription, 'Published SEO description.');
+        assert.equal(savedContent.siteSettings.openGraphTitle, 'Published Open Graph title');
+        assert.equal(savedContent.siteSettings.openGraphDescription, 'Published Open Graph description.');
+        assert.equal(savedContent.siteSettings.canonicalUrl, 'https://portfolio.example.test/');
+        assert.equal(savedContent.siteSettings.faviconUrl, '/api/portfolio-media/favicon.png?id=file-seo-test');
+        assert.equal(savedContent.siteSettings.socialImageUrl, 'https://portfolio.example.test/social.png');
+        assert.equal(savedContent.siteSettings.twitterCard, 'summary_large_image');
+        assert.equal(savedContent.siteSettings.twitterTitle, 'Published Twitter title');
+        assert.equal(savedContent.siteSettings.twitterDescription, 'Published Twitter description.');
+      }
     }
 
-    console.log('Content visibility settings persist through save, publish, and reload.');
+    const updatedContent = {
+      ...content,
+      siteSettings: {
+        ...content.siteSettings,
+        siteName: 'Updated SEO Test',
+        siteTitle: 'Updated SEO page title',
+      },
+    };
+    const updatedSnapshot = await contentStudioService.saveDraft(updatedContent, 'visibility-test', publishedSnapshot.published);
+    assert.equal(updatedSnapshot.isPublished, false, 'Subsequent SEO edits are detected as unpublished');
+    await contentStudioService.publishDraft('visibility-test');
+    const [currentVersion] = await contentStudioService.listRevisions();
+    assert.ok(currentVersion.changes.includes('Site & Appearance · Site name: Published SEO Test → Updated SEO Test'));
+    assert.ok(currentVersion.changes.includes('Site & Appearance · Page title: Published SEO page title → Updated SEO page title'));
+
+    const invalidMetadata = {
+      ...content,
+      siteSettings: { ...content.siteSettings, faviconUrl: 'javascript:alert(1)' },
+    };
+    await assert.rejects(
+      contentStudioService.saveDraft(invalidMetadata, 'visibility-test'),
+      /Favicon URL must use http\(s\) or a public local portfolio path/,
+    );
+    console.log('Content visibility and SEO settings persist through save, publish, and reload.');
   } finally {
     await disconnectMongo();
   }

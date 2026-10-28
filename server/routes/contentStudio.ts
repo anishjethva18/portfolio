@@ -37,6 +37,7 @@ contentStudioRouter.get('/status', async (_req: AuthenticatedRequest, res: Respo
 
 contentStudioRouter.get('/', async (_req: AuthenticatedRequest, res: Response) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const snapshot = await contentStudioService.getSnapshot(await getLivePortfolioContent());
     res.json({ success: true, ...snapshot });
   } catch (error: any) {
@@ -46,7 +47,11 @@ contentStudioRouter.get('/', async (_req: AuthenticatedRequest, res: Response) =
 
 contentStudioRouter.put('/draft', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const snapshot = await contentStudioService.saveDraft(req.body?.content, req.user!.userId);
+    const snapshot = await contentStudioService.saveDraft(
+      req.body?.content,
+      req.user!.userId,
+      await getLivePortfolioContent(),
+    );
     res.json({ success: true, ...snapshot });
   } catch (error: any) {
     const status = error.message?.includes('smaller than') ? 413 : error.message?.includes('must') ? 422 : 503;

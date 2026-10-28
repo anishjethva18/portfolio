@@ -145,6 +145,11 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
     const timeout = window.setTimeout(() => setNotice(''), 5000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+  useEffect(() => {
+    if (!resumeMessage) return;
+    const timeout = window.setTimeout(() => setResumeMessage(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [resumeMessage]);
 
   useEffect(() => () => {
     if (preview?.url.startsWith('blob:')) URL.revokeObjectURL(preview.url);
@@ -226,8 +231,11 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
     };
   }, [loadResumes]);
 
-  const saveResumes = async () => {
-    if (resumeSaving) return;
+  const saveResumes = async (throwOnError = false) => {
+    if (resumeSaving) {
+      if (throwOnError) throw new Error('Resume changes are already being saved. Wait for that save to finish and try again.');
+      return;
+    }
     if (JSON.stringify(resumes) === JSON.stringify(savedResumes)) return;
     setResumeSaving(true);
     setError('');
@@ -268,11 +276,12 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       await onSaved?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Resume draft could not be saved.');
+      if (throwOnError) throw cause;
     } finally {
       setResumeSaving(false);
     }
   };
-  saveResumeRef.current = saveResumes;
+  saveResumeRef.current = () => saveResumes(true);
 
   useEffect(() => {
     const handleSaveDraft = (event: Event) => {

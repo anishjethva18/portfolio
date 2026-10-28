@@ -13,6 +13,11 @@ import {
 import { useOS } from '../../context/OSContext';
 import { PdfDocumentViewer } from './PdfDocumentViewer';
 import { isPortfolioMediaUrl } from '../../utils/portfolioMedia';
+import {
+  getCachedPublishedContent,
+  getCachedResumeBytes,
+  loadPublishedContent,
+} from '../../utils/publishedPortfolioCache';
 
 interface ResumeData {
   name: string;
@@ -105,119 +110,57 @@ const DEFAULT_RESUME_DATA: ResumeData = {
 
 export const ResumeViewerApp: React.FC<ResumeViewerAppProps> = ({ initialResumeUrl }) => {
   const { addNotification, settings } = useOS();
-  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches ? 150 : 100);
+  const [zoom, setZoom] = useState(100);
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-  const [fitWidth, setFitWidth] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 640px)').matches);
+  const [fitWidth, setFitWidth] = useState(true);
   const [publishedResumeUrl, setPublishedResumeUrl] = useState<string | null>(() => getResumePdfUrl(initialResumeUrl));
   const [publishedResumeChoices, setPublishedResumeChoices] = useState<PublishedResumeOption[]>([]);
   const [resumeData, setResumeData] = useState<ResumeData>(DEFAULT_RESUME_DATA);
 
   // Sync live resume data from API
   useEffect(() => {
-    let latestRequest = 0;
-    const syncFromPublishedContent = (publishedContent?: any) => {
-      const data = publishedContent || {};
-      if (data?.profile?.name) {
-        latestRequest += 1;
-        const profile = data.profile;
-        const contactVisibility = profile.contactVisibility || {};
-        setResumeData((prev) => ({
-          ...prev,
-          name: profile.name,
-          title: profile.title ?? prev.title,
-          location: contactVisibility.location === false ? '' : profile.location ?? prev.location,
-          email: contactVisibility.email === false ? '' : profile.email ?? prev.email,
-          phone: contactVisibility.phone === false ? '' : profile.phone ?? prev.phone,
-          website: profile.website ?? prev.website,
-          summary: profile.bio ?? prev.summary,
-          experiences: Array.isArray(data.experiences) ? data.experiences.filter((item: any) => item?.visible !== false).map((item: any) => ({ role: item.role, company: item.company, period: item.period, description: item.description || [] })) : prev.experiences,
-          education: Array.isArray(data.education) ? data.education.filter((item: any) => item?.visible !== false).map((item: any) => ({ degree: item.degree, institution: item.institution, period: item.period })) : prev.education,
-          skills: Array.isArray(data.skills) ? data.skills.map((category: any) => ({ category: category.title, items: (category.skills || []).map((skill: any) => skill.name).join(', ') })) : prev.skills,
-        }));
-        const availableResumes = getPublishedResumeChoices(data.resumes);
-        setPublishedResumeChoices(availableResumes);
-        setPublishedResumeUrl(
-          getResumePdfUrl(initialResumeUrl) ||
-            choosePublishedResume(availableResumes)?.file ||
-            (!Array.isArray(data.resumes) ? getResumePdfUrl(profile.resumeUrl) : null)
-        );
-        return;
-      }
-
-      const requestId = ++latestRequest;
-      fetch('/api/profile', { cache: 'no-store' })
-      .then((res) => res.json())
-      .then(async (data) => {
-        if (requestId !== latestRequest) return;
-        let resumeSource = data;
-        let availableResumes = getPublishedResumeChoices(data?.resumes);
-        if (availableResumes.length === 0) {
-          try {
-            const response = await fetch('/api/profile/content', { cache: 'no-store' });
-            const contentPayload = await response.json();
-            const content = contentPayload?.content;
-            if (requestId !== latestRequest) return;
-            const fallbackResumes = Array.isArray(content?.resumes) ? content.resumes : [];
-            availableResumes = getPublishedResumeChoices(fallbackResumes);
-            if (Array.isArray(content?.resumes)) resumeSource = { ...data, resumes: content.resumes, resumeUrl: content?.profile?.resumeUrl || data?.resumeUrl };
-          } catch {
-            // Keep the single legacy resume fallback if the content endpoint is unavailable.
-          }
-        }
-        if (data && data.name) {
-          setResumeData((prev) => ({
-            ...prev,
-            name: data.name,
-            title: data.title ?? prev.title,
-            location: data.location ?? prev.location,
-            email: data.email ?? prev.email,
-            phone: data.phone ?? prev.phone,
-            website: data.website ?? prev.website,
-            summary: data.bio ?? prev.summary,
-            experiences:
-              Array.isArray(data.experiences)
-                ? data.experiences.filter((item: any) => item?.visible !== false).map((e: any) => ({
-                    role: e.role,
-                    company: e.company,
-                    period: e.period,
-                    description: e.description,
-                  }))
-                : prev.experiences,
-            education:
-              Array.isArray(data.education)
-                ? data.education.filter((item: any) => item?.visible !== false).map((edu: any) => ({
-                    degree: edu.degree,
-                    institution: edu.institution,
-                    period: edu.period,
-                  }))
-                : prev.education,
-            skills:
-              Array.isArray(data.skills)
-                ? data.skills.map((cat: any) => ({
-                    category: cat.title,
-                    items: (cat.skills || []).map((s: any) => s.name).join(', '),
-                  }))
-                : prev.skills,
-          }));
-          setPublishedResumeChoices(availableResumes);
-          setPublishedResumeUrl(
-            getResumePdfUrl(initialResumeUrl) ||
-              choosePublishedResume(availableResumes)?.file ||
-              (!Array.isArray(resumeSource.resumes) ? getResumePdfUrl(resumeSource.resumeUrl) : null)
-          );
-        }
-      })
-      .catch(() => {});
+    let active = true;
+    const syncFromPublishedContent = (data?: any) => {
+      if (!data) return;
+      const profile = data.profile || data;
+      if (!profile?.name) return;
+      const contactVisibility = profile.contactVisibility || {};
+      setResumeData((prev) => ({
+        ...prev,
+        name: profile.name,
+        title: profile.title ?? prev.title,
+        location: contactVisibility.location === false ? '' : profile.location ?? prev.location,
+        email: contactVisibility.email === false ? '' : profile.email ?? prev.email,
+        phone: contactVisibility.phone === false ? '' : profile.phone ?? prev.phone,
+        website: profile.website ?? prev.website,
+        summary: profile.bio ?? prev.summary,
+        experiences: Array.isArray(data.experiences) ? data.experiences.filter((item: any) => item?.visible !== false).map((item: any) => ({ role: item.role, company: item.company, period: item.period, description: item.description || [] })) : prev.experiences,
+        education: Array.isArray(data.education) ? data.education.filter((item: any) => item?.visible !== false).map((item: any) => ({ degree: item.degree, institution: item.institution, period: item.period })) : prev.education,
+        skills: Array.isArray(data.skills) ? data.skills.map((category: any) => ({ category: category.title, items: (category.skills || []).map((skill: any) => skill.name).join(', ') })) : prev.skills,
+      }));
+      const availableResumes = getPublishedResumeChoices(data.resumes);
+      setPublishedResumeChoices(availableResumes);
+      setPublishedResumeUrl(
+        getResumePdfUrl(initialResumeUrl) ||
+        choosePublishedResume(availableResumes)?.file ||
+        (!Array.isArray(data.resumes) ? getResumePdfUrl(profile.resumeUrl) : null)
+      );
     };
 
-    syncFromPublishedContent();
+    syncFromPublishedContent(getCachedPublishedContent());
+    void loadPublishedContent().then((content) => {
+      if (active) syncFromPublishedContent(content);
+    }).catch((error: unknown) => {
+      if (active) console.error('[ResumeViewer] Published resumes could not be loaded.', error);
+    });
     const handlePublish = (event: Event) => {
       syncFromPublishedContent((event as CustomEvent).detail);
     };
     window.addEventListener('portfolio-content-published', handlePublish);
     window.addEventListener('portfolio-data-updated', handlePublish);
     return () => {
+      active = false;
       window.removeEventListener('portfolio-content-published', handlePublish);
       window.removeEventListener('portfolio-data-updated', handlePublish);
     };
@@ -227,9 +170,8 @@ export const ResumeViewerApp: React.FC<ResumeViewerAppProps> = ({ initialResumeU
     if (!publishedResumeUrl) return;
     setDownloading(true);
     try {
-      const response = await fetch(publishedResumeUrl, { credentials: 'include' });
-      if (!response.ok) throw new Error('The published resume could not be downloaded.');
-      const objectUrl = URL.createObjectURL(await response.blob());
+      const bytes = await getCachedResumeBytes(publishedResumeUrl);
+      const objectUrl = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = objectUrl;
       const safeResumeTitle = selectedResumeTitle.replace(/\.pdf$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'Resume';

@@ -492,7 +492,7 @@ export const TouchKeyboard: React.FC = () => {
 
       {/* Bottom Control Row */}
       <div className="grid min-w-0 grid-cols-3 items-center gap-1 pt-1">
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)] items-center gap-1">
+        <div className="grid min-w-0 grid-cols-4 items-center gap-1">
         <button
           type="button"
           onMouseDown={(e) => e.preventDefault()}
@@ -534,7 +534,7 @@ export const TouchKeyboard: React.FC = () => {
               setAlternateSymbolMode(false);
             }
           }}
-          className="touch-key h-9 w-full min-w-0 rounded-lg bg-white/10 px-0.5 text-[9px] font-bold text-slate-200 border border-white/5 transition-all cursor-pointer sm:h-10 sm:text-xs"
+          className="touch-key h-9 w-full min-w-0 whitespace-nowrap rounded-lg bg-white/10 px-0.5 text-[8px] font-bold text-slate-200 border border-white/5 transition-all cursor-pointer min-[380px]:text-[9px] sm:h-10 sm:text-xs"
         >
           {!symbolMode ? '&123' : alternateSymbolMode ? 'ABC' : '#+='}
         </button>

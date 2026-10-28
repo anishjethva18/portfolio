@@ -14,6 +14,7 @@ import { AdminLoginScreen } from './components/apps/AdminLoginScreen';
 import { AdminDraftPreviewPage } from './components/apps/admin/AdminDraftPreviewPage';
 import { trackPortfolioAnalytics } from './utils/analytics';
 import { ConfirmDialogProvider } from './context/ConfirmDialogContext';
+import { applySeoMetadata } from './utils/seoMetadata';
 import { Construction, ShieldCheck, Clock3, Sparkles } from 'lucide-react';
 import { getAdminShortcut, matchesAdminShortcut } from './utils/adminShortcut';
 
@@ -44,23 +45,6 @@ const OSMainContent: React.FC = () => {
   React.useEffect(() => {
     let active = true;
     let publishedAppLayoutApplied = false;
-    const applyPublishedFavicon = (value: unknown) => {
-      const currentLink = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-      if (typeof value !== 'string' || !value.trim()) {
-        currentLink?.remove();
-        return;
-      }
-      try {
-        const faviconUrl = new URL(value.trim(), window.location.origin);
-        if (!['http:', 'https:'].includes(faviconUrl.protocol)) return;
-        const link = currentLink || document.createElement('link');
-        link.rel = 'icon';
-        link.href = faviconUrl.href;
-        if (!currentLink) document.head.appendChild(link);
-      } catch (error) {
-        console.error('[App] Published favicon URL is invalid.', error);
-      }
-    };
     const refreshMaintenanceSettings = async () => {
       try {
         const response = await fetch('/api/portfolio-content', { cache: 'no-store' });
@@ -68,7 +52,7 @@ const OSMainContent: React.FC = () => {
         const payload = await response.json();
         if (!payload.success || !payload.content?.siteSettings) throw new Error('Published maintenance settings are missing.');
         if (active) {
-          applyPublishedFavicon(payload.content.siteSettings.faviconUrl);
+          applySeoMetadata(payload.content, window.location.href);
           if (!publishedAppLayoutApplied) {
             applyPublishedAppLayout(payload.content.siteSettings);
             publishedAppLayoutApplied = true;
@@ -92,7 +76,7 @@ const OSMainContent: React.FC = () => {
       const content = (event as CustomEvent).detail;
       const settings = content?.siteSettings;
       if (!settings) return;
-      applyPublishedFavicon(settings.faviconUrl);
+      applySeoMetadata(content, window.location.href);
       applyPublishedAppLayout(settings);
       setMaintenanceSettings({
         enabled: settings.maintenanceMode === true,

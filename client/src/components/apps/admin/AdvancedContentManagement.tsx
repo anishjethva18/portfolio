@@ -55,8 +55,12 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
 
   useEffect(() => { void load(); }, []);
 
-  const save = async () => {
-    if (loading || saving || text === savedText) return;
+  const save = async (throwOnError = false) => {
+    if (loading || saving) {
+      if (throwOnError) throw new Error('Advanced portfolio content is still loading or saving. Try again shortly.');
+      return;
+    }
+    if (text === savedText) return;
     setSaving(true);
     setError('');
     setMessage('');
@@ -84,11 +88,12 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
       await onSaved?.();
     } catch (cause: any) {
       setError(cause instanceof SyntaxError ? `Invalid JSON: ${cause.message}` : cause.message || 'Draft could not be saved.');
+      if (throwOnError) throw cause;
     } finally {
       setSaving(false);
     }
   };
-  saveRef.current = save;
+  saveRef.current = () => save(true);
 
   useEffect(() => {
     const handleSaveDraft = (event: Event) => {

@@ -1782,7 +1782,7 @@ adminRouter.get('/portfolio-content', async (req: AuthenticatedRequest, res: Res
 adminRouter.put('/portfolio-content', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const content = req.body?.content || req.body;
-    const snapshot = await contentStudioService.saveDraft(content, req.user!.userId);
+    const snapshot = await contentStudioService.saveDraft(content, req.user!.userId, await getLivePortfolioContent());
     await recordAudit(req, 'SAVE_DRAFT', 'PortfolioContent', undefined, 'Admin saved portfolio content draft');
     res.json({ success: true, ...snapshot, message: 'Portfolio draft saved. Publish it from the Publish & History workspace.' });
   } catch (err: any) {

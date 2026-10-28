@@ -96,8 +96,15 @@ export interface ISiteContent extends Document {
   }>;
   capabilities?: Array<{ title: string; icon: string; description: string; visible?: boolean }>;
   siteSettings: {
+    siteName?: string;
     siteTitle: string;
     metaDescription: string;
+    openGraphTitle?: string;
+    openGraphDescription?: string;
+    canonicalUrl?: string;
+    twitterCard?: 'summary' | 'summary_large_image';
+    twitterTitle?: string;
+    twitterDescription?: string;
     portfolioVersion?: string;
     socialImageUrl?: string;
     faviconUrl?: string;
@@ -254,8 +261,15 @@ const SiteContentSchema = new Schema<ISiteContent>(
       visible: { type: Boolean, default: true },
     }],
     siteSettings: {
+      siteName: { type: String, trim: true, maxlength: 160, default: '' },
       siteTitle: { type: String, default: 'Windows 11 OS Portfolio — Anish Jethva' },
       metaDescription: { type: String, default: 'Full-stack Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps.' },
+      openGraphTitle: { type: String, trim: true, maxlength: 120, default: '' },
+      openGraphDescription: { type: String, trim: true, maxlength: 320, default: '' },
+      canonicalUrl: { type: String, trim: true, maxlength: 2048, default: '' },
+      twitterCard: { type: String, enum: ['summary', 'summary_large_image'], default: 'summary_large_image' },
+      twitterTitle: { type: String, trim: true, maxlength: 120, default: '' },
+      twitterDescription: { type: String, trim: true, maxlength: 320, default: '' },
       portfolioVersion: { type: String, default: '1.0.0', trim: true, maxlength: 32 },
       socialImageUrl: { type: String, default: '' },
       faviconUrl: { type: String, default: '' },

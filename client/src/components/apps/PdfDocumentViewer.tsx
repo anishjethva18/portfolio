@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { getCachedResumeBytes } from '../../utils/publishedPortfolioCache';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -51,7 +52,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
       container.replaceChildren();
 
       try {
-        loadingTask ||= pdfjs.getDocument({ url, withCredentials: true });
+        loadingTask ||= pdfjs.getDocument({ data: (await getCachedResumeBytes(url)).slice() });
         pdfDocument ||= await loadingTask.promise;
         if (cancelled || generation !== renderGeneration) return;
 

@@ -2,6 +2,10 @@
   command = "npm ci --prefix client && npm --prefix client run build"
   publish = "client/dist"
 
+[[edge_functions]]
+  function = "seo-metadata"
+  path = "/"
+
 [[redirects]]
   from = "/api/*"
   to = "https://portfolio-ub24.onrender.com/api/:splat"

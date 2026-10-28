@@ -17,6 +17,7 @@ import { WidgetsBoard } from '../widgets/WidgetsBoard';
 import { TouchKeyboard } from '../common/TouchKeyboard';
 import { Smartphone, X } from 'lucide-react';
 import { getDefaultDesktopWallpaper } from '../../utils/siteAppearance';
+import { cachePublishedContent, getCachedPublishedContent, loadPublishedContent } from '../../utils/publishedPortfolioCache';
 import { isMediaFile } from '../../utils/fileAssociations';
 import { soundManager } from '../../utils/sound';
 import { useAuth } from '../../context/AuthContext';
@@ -179,6 +180,12 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
     };
 
     let lastContent = '';
+    const cachedContent = getCachedPublishedContent();
+    if (cachedContent) {
+      lastContent = JSON.stringify(cachedContent);
+      setSiteContent(cachedContent);
+      applyAppearanceSettings(cachedContent.siteSettings, cachedContent.profile?.website);
+    }
     let isLoadingContent = false;
     let refreshRequested = false;
     const refreshPublishedContent = async (notifyApps = false) => {
@@ -188,17 +195,15 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
       }
       isLoadingContent = true;
       try {
-        const res = await fetch('/api/portfolio-content', { cache: 'no-store' });
-        if (!res.ok) throw new Error('Published portfolio settings could not be loaded.');
-        const data = await res.json();
-        if (!active || !data.success || !data.content) return;
-        const contentKey = JSON.stringify(data.content);
+        const content = await loadPublishedContent(notifyApps);
+        if (!active) return;
+        const contentKey = JSON.stringify(content);
         if (contentKey !== lastContent) {
           lastContent = contentKey;
-          setSiteContent(data.content);
+          setSiteContent(content);
           setBannerDismissed(false);
-          applyAppearanceSettings(data.content.siteSettings, data.content.profile?.website);
-          if (notifyApps) window.dispatchEvent(new CustomEvent('portfolio-content-published', { detail: data.content }));
+          applyAppearanceSettings(content.siteSettings, content.profile?.website);
+          if (notifyApps) window.dispatchEvent(new CustomEvent('portfolio-content-published', { detail: content }));
         }
       } catch (error) {
         if (active) console.error('[Desktop] Published portfolio settings could not be applied.', error);
@@ -211,7 +216,7 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
       }
     };
 
-    void refreshPublishedContent();
+    void refreshPublishedContent(true);
 
     const handleAppearanceSync = (event: Event) => {
       const customEvt = event as CustomEvent;
@@ -222,6 +227,7 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
     const handlePublishedContent = (event: Event) => {
       const customEvt = event as CustomEvent;
       if (active && customEvt.detail) {
+        cachePublishedContent(customEvt.detail);
         lastContent = JSON.stringify(customEvt.detail);
         setSiteContent(customEvt.detail);
         setBannerDismissed(false);

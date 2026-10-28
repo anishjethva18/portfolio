@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useOS } from '../../context/OSContext';
 import { useVirtualDDriveFiles } from '../../hooks/useVirtualDDriveFiles';
 import { calculateDriveMetrics } from '../../utils/storageMetrics';
@@ -210,6 +211,11 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
     setSearchQuery('');
   };
 
+  const navigateFromSidebar = (newPath: string) => {
+    navigateTo(newPath);
+    if (window.innerWidth < 640) setHideFolders(true);
+  };
+
   const handleBack = () => {
     if (historyIndex > 0) {
       const target = history[historyIndex - 1];
@@ -413,16 +419,28 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
 
   const modalTitle = title || (mode === 'open' ? 'Open' : 'Save As');
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-xs z-[99999] flex items-center justify-center p-3 sm:p-6 animate-in fade-in select-none"
+      className="fixed inset-x-0 top-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] bg-black/70 backdrop-blur-xs z-[99999] flex items-center justify-center p-3 sm:p-6 animate-in fade-in select-none"
       onClick={onClose}
     >
       <div
-        className={`w-full max-w-4xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-colors duration-200 animate-in zoom-in-95 h-[88dvh] max-h-[88dvh] sm:h-[540px] sm:max-h-none ${
+        className={`w-full max-w-4xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-colors duration-200 animate-in zoom-in-95 h-[88dvh] max-h-[calc(100dvh-5rem-env(safe-area-inset-bottom,0px))] sm:h-[540px] sm:max-h-none ${
           isDark ? 'bg-[#1f1f1f] border-white/15 text-slate-200' : 'bg-white border-slate-300 text-slate-800'
         }`}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          const target = e.target;
+          if (
+            window.innerWidth < 640 &&
+            !hideFolders &&
+            target instanceof Element &&
+            !target.closest('.save-as-navigation-pane') &&
+            !target.closest('[data-navigation-toggle]')
+          ) {
+            setHideFolders(true);
+          }
+        }}
       >
         {/* 1. Header Bar */}
         <div className={`flex items-center justify-between px-4 py-2.5 border-b shrink-0 ${
@@ -452,6 +470,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
           <div className="flex items-center gap-1.5">
             {/* Sidebar toggle for mobile/tablet */}
             <button
+              data-navigation-toggle
               onClick={() => setHideFolders(!hideFolders)}
               className={`p-1 px-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer ${
                 !hideFolders
@@ -771,7 +790,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
         <div className="flex-1 flex overflow-hidden relative">
           {/* Left Navigation Pane */}
           {!hideFolders && (
-            <div className={`w-48 sm:w-56 border-r p-2.5 overflow-y-auto shrink-0 space-y-3 text-xs ${
+            <div className={`save-as-navigation-pane w-48 sm:w-56 border-r p-2.5 overflow-y-auto shrink-0 space-y-3 text-xs ${
               isDark ? 'bg-[#181818]/95 border-white/10' : 'bg-slate-50/95 border-slate-200'
             } absolute sm:relative left-0 top-0 bottom-0 z-30 shadow-2xl sm:shadow-none h-full`}>
               {/* Quick Access */}
@@ -788,7 +807,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
                     return (
                       <button
                         key={dir.id}
-                        onClick={() => navigateTo(dir.path)}
+                        onClick={() => navigateFromSidebar(dir.path)}
                         className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left cursor-pointer transition-colors ${
                           isCur
                             ? isDark
@@ -810,7 +829,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
               {/* This PC & Drives */}
               <div className={`pt-2 border-t ${isDark ? 'border-white/5' : 'border-slate-200'}`}>
                 <button
-                  onClick={() => navigateTo('This PC')}
+                  onClick={() => navigateFromSidebar('This PC')}
                   className={`w-full flex items-center gap-2 px-2 py-1 rounded-lg text-left cursor-pointer font-bold transition-colors ${
                     currentLocation === 'This PC'
                       ? isDark
@@ -831,7 +850,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
                     return (
                       <button
                         key={drive.letter}
-                        onClick={() => navigateTo(drive.letter)}
+                        onClick={() => navigateFromSidebar(drive.letter)}
                         className={`w-full flex items-center gap-2 px-2 py-1 rounded-lg text-left cursor-pointer transition-colors ${
                           isCur
                             ? isDark
@@ -1420,7 +1439,8 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

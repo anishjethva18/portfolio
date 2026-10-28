@@ -51,6 +51,7 @@ import {
 
 interface PortfolioManagementProps {
   onSaveSuccess?: () => void;
+  onDraftSaved?: (hasUnpublishedChanges: boolean) => void;
   onDraftChange?: (dirty: boolean) => void;
   initialSection?: 'profile' | 'socials' | 'skills' | 'experience' | 'education' | 'appearance' | 'seo';
   requestedSection?: 'profile' | 'appearance' | 'seo';
@@ -82,7 +83,7 @@ const VisibilityToggle: React.FC<{ label: string; visible: boolean; onToggle: (v
   </button>
 );
 
-export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSaveSuccess, onDraftChange, initialSection = 'profile', requestedSection }) => {
+export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSaveSuccess, onDraftSaved, onDraftChange, initialSection = 'profile', requestedSection }) => {
   const confirm = useConfirmDialog();
   const {
     updateHiddenAppIds, desktopIcons,
@@ -113,6 +114,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const [adminShortcut, setAdminShortcut] = useState(getAdminShortcut);
   const [recordingAdminShortcut, setRecordingAdminShortcut] = useState(false);
   const saveDraftActionRef = useRef<() => Promise<void>>(async () => undefined);
+  const savingDraftLocallyRef = useRef(false);
 
   useEffect(() => {
     if (requestedSection) setActiveSection(requestedSection);
@@ -156,8 +158,15 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     certifications: [],
     capabilities: [],
     siteSettings: {
+      siteName: '',
       siteTitle: 'Windows 11 OS Portfolio — Anish Jethva',
       metaDescription: 'Interactive Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps.',
+      openGraphTitle: '',
+      openGraphDescription: '',
+      canonicalUrl: '',
+      twitterCard: 'summary_large_image',
+      twitterTitle: '',
+      twitterDescription: '',
       portfolioVersion: '1.0.0',
       socialImageUrl: '',
       faviconUrl: '',
@@ -205,7 +214,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       const detail = (event as CustomEvent<{ path?: string }>).detail;
       // Uploading an asset does not change the content draft. Refetching here can
       // race with updateProfile() and replace the just-uploaded URL with old data.
-      if (detail?.path === '/api/files/portfolio-media') return;
+      if (detail?.path === '/api/files/portfolio-media' ||
+        (detail?.path === '/api/admin/content-studio/draft' && savingDraftLocallyRef.current) ||
+        detail?.path === '/api/admin/content-studio/publish') return;
       void fetchContent();
     };
     window.addEventListener('portfolio-data-updated', handleRemotePortfolioChange);
@@ -246,7 +257,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await apiFetch('/api/admin/content-studio');
+      const res = await apiFetch('/api/admin/content-studio', { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok || !data.success || !data.draft) throw new Error(data.error || 'Failed to load portfolio content.');
       const draftSettings = data.draft.siteSettings || {};
@@ -278,24 +289,33 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   };
 
   const persistDraft = async () => {
-    const currentResponse = await apiFetch('/api/admin/content-studio');
+    const currentResponse = await apiFetch('/api/admin/content-studio', { cache: 'no-store' });
     const currentData = await currentResponse.json();
     if (!currentResponse.ok || !currentData.success || !currentData.draft) {
       throw new Error(currentData.error || 'Could not load the latest portfolio draft.');
     }
     const base = savedDraftContent ?? content;
     const contentToSave = mergeAdminDraft(base, content, currentData.draft);
-    const response = await apiFetch('/api/admin/content-studio/draft', {
-      method: 'PUT',
-      body: JSON.stringify({ content: contentToSave }),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save portfolio content.');
-    return data;
+    savingDraftLocallyRef.current = true;
+    try {
+      const response = await apiFetch('/api/admin/content-studio/draft', {
+        method: 'PUT',
+        body: JSON.stringify({ content: contentToSave }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save portfolio content.');
+      return data;
+    } finally {
+      savingDraftLocallyRef.current = false;
+    }
   };
 
-  const handleSaveAll = async () => {
-    if (saving || loading || savedDraftContent === null || JSON.stringify(content) === JSON.stringify(savedDraftContent)) return;
+  const handleSaveAll = async (throwOnError = false): Promise<boolean> => {
+    if (saving || loading || savedDraftContent === null) {
+      if (throwOnError) throw new Error('Portfolio settings are still loading or another save is in progress. Try again shortly.');
+      return false;
+    }
+    if (JSON.stringify(content) === JSON.stringify(savedDraftContent)) return false;
     setSaving(true);
     setSuccessMessage(null);
     setErrorMessage(null);
@@ -305,15 +325,19 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       setContent(savedDraft);
       setSavedDraftContent(clonePortfolioContent(savedDraft));
       setPublishedContent(data.published);
+      if (typeof data.isPublished === 'boolean') onDraftSaved?.(!data.isPublished);
       setSuccessMessage('Draft saved. Publish it when you are ready to update the live portfolio.');
       onSaveSuccess?.();
+      return true;
     } catch (err: any) {
       setErrorMessage(err.message || 'Network error saving portfolio content.');
+      if (throwOnError) throw err;
+      return false;
     } finally {
       setSaving(false);
     }
   };
-  saveDraftActionRef.current = async () => { await handleSaveAll(); };
+  saveDraftActionRef.current = async () => { await handleSaveAll(true); };
 
   useEffect(() => {
     const handleAdminSaveDraft = (event: Event) => {
@@ -552,6 +576,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
         [field]: value,
       },
     }));
+    onDraftChange?.(true);
   };
 
   const toggleAppAvailability = (appId: string, enabled: boolean) => {
@@ -1576,64 +1601,103 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
           <section className="admin-content-card space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex items-start gap-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-600"><Globe className="h-5 w-5" /></span>
-              <div><h3 className="text-base font-semibold text-slate-900">SEO &amp; Sharing</h3><p className="mt-1 text-xs text-slate-500">Edit search and social metadata. Changes stay in your private draft until published.</p></div>
+              <div><h3 className="text-base font-semibold text-slate-900">SEO &amp; Sharing</h3><p className="mt-1 text-xs text-slate-500">Edit search and social metadata, then use the Admin Panel header’s Save draft and Publish buttons. Changes stay in your private draft until published.</p></div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block text-xs font-semibold text-slate-700">Page title
-                <input value={content.siteSettings?.siteTitle || ''} maxLength={120} onChange={(event) => updateSiteSettings('siteTitle', event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-              </label>
-              <label className="block text-xs font-semibold text-slate-700">Portfolio version
-                <input value={content.siteSettings?.portfolioVersion || '1.0.0'} maxLength={32} onChange={(event) => updateSiteSettings('portfolioVersion', event.target.value.trim())} placeholder="1.0.0" className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-                <span className="mt-1 block text-[10px] font-normal text-slate-500">Choose the portfolio release label shown in Settings. New installations start at 1.0.0.</span>
-              </label>
-              <div className="space-y-2 text-xs font-semibold text-slate-700">
-                <label htmlFor="social-preview-url">Social preview image</label>
-                <input id="social-preview-url" value={content.siteSettings?.socialImageUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('socialImageUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-                <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
-                  <ImageIcon className="h-4 w-4" />
-                  {uploadingMediaField === 'socialImageUrl' ? 'Uploading image…' : 'Upload social image'}
-                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'socialImageUrl'); event.currentTarget.value = ''; }} className="sr-only" />
+            <section className="space-y-4">
+              <h4 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Site details</h4>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-xs font-semibold text-slate-700">Site name
+                  <input value={content.siteSettings?.siteName || ''} maxLength={160} onChange={(event) => updateSiteSettings('siteName', event.target.value)} placeholder={content.profile?.name || 'Portfolio site name'} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
                 </label>
-                <span className="block text-[10px] font-normal text-slate-500">The preview shows the full image. For social cards, use 1200 × 630 (1.91:1); sharing platforms may crop images to their own layouts.</span>
+                <label className="block text-xs font-semibold text-slate-700">Page title
+                  <input value={content.siteSettings?.siteTitle || ''} maxLength={120} onChange={(event) => updateSiteSettings('siteTitle', event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">Portfolio version
+                  <input value={content.siteSettings?.portfolioVersion || '1.0.0'} maxLength={32} onChange={(event) => updateSiteSettings('portfolioVersion', event.target.value.trim())} placeholder="1.0.0" className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700 md:col-span-2">Meta description
+                  <textarea rows={3} maxLength={320} value={content.siteSettings?.metaDescription || ''} onChange={(event) => updateSiteSettings('metaDescription', event.target.value)} className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                  <span className="mt-1 block text-right text-[10px] text-slate-500">{(content.siteSettings?.metaDescription || '').length}/320</span>
+                </label>
+                <label className="block text-xs font-semibold text-slate-700 md:col-span-2">Canonical portfolio URL
+                  <input type="url" value={content.siteSettings?.canonicalUrl || ''} onChange={(event) => updateSiteSettings('canonicalUrl', event.target.value)} placeholder={window.location.origin} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
               </div>
-              <div className="space-y-2 text-xs font-semibold text-slate-700">
-                <label htmlFor="favicon-url">Website favicon</label>
-                <input id="favicon-url" value={content.siteSettings?.faviconUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('faviconUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-                <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
-                  <ImageIcon className="h-4 w-4" />
-                  {uploadingMediaField === 'faviconUrl' ? 'Uploading icon…' : 'Upload favicon'}
-                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'faviconUrl'); event.currentTarget.value = ''; }} className="sr-only" />
-                </label>
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div>
-                    <p className="text-[11px] font-semibold text-slate-700">Use favicon in emails</p>
-                    <p className="mt-0.5 text-[10px] font-normal text-slate-500">Email branding changes after you publish.</p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={content.siteSettings?.emailFaviconEnabled !== false}
-                    aria-label="Use website favicon in emails"
-                    onClick={() => updateSiteSettings('emailFaviconEnabled', content.siteSettings?.emailFaviconEnabled === false)}
-                    className={`admin-compact-switch relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border border-slate-500 p-0 shadow-inner transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${content.siteSettings?.emailFaviconEnabled !== false ? 'bg-sky-600' : 'bg-slate-500'}`}
-                    style={{ backgroundColor: content.siteSettings?.emailFaviconEnabled !== false ? '#0284c7' : '#64748b' }}
-                  >
-                    <span
-                      className="absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full border border-slate-300 bg-white shadow-md transition-[left]"
-                      style={{ left: content.siteSettings?.emailFaviconEnabled !== false ? 'calc(100% - 1.375rem)' : '0.125rem' }}
-                    />
-                  </button>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Images &amp; favicon</h4>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 text-xs font-semibold text-slate-700">
+                  <label htmlFor="social-preview-url">Social preview image</label>
+                  <input id="social-preview-url" value={content.siteSettings?.socialImageUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('socialImageUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                  <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
+                    <ImageIcon className="h-4 w-4" />
+                    {uploadingMediaField === 'socialImageUrl' ? 'Uploading image…' : 'Upload social image'}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'socialImageUrl'); event.currentTarget.value = ''; }} className="sr-only" />
+                  </label>
                 </div>
-                <span className="block text-[10px] font-normal text-slate-500">When off, email templates show the AJ mark. When on, email apps still need a publicly reachable HTTPS API URL to load the image; localhost cannot be reached by the recipient's email service. The website favicon remains unchanged.</span>
+                <div className="space-y-2 text-xs font-semibold text-slate-700">
+                  <label htmlFor="favicon-url">Website favicon</label>
+                  <input id="favicon-url" value={content.siteSettings?.faviconUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('faviconUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                  <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
+                    <ImageIcon className="h-4 w-4" />
+                    {uploadingMediaField === 'faviconUrl' ? 'Uploading icon…' : 'Upload favicon'}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'faviconUrl'); event.currentTarget.value = ''; }} className="sr-only" />
+                  </label>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-700">Use favicon in emails</p>
+                      <p className="mt-0.5 text-[10px] font-normal text-slate-500">Email branding changes after you publish.</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={content.siteSettings?.emailFaviconEnabled !== false}
+                      aria-label="Use website favicon in emails"
+                      onClick={() => updateSiteSettings('emailFaviconEnabled', content.siteSettings?.emailFaviconEnabled === false)}
+                      className={`admin-compact-switch relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border border-slate-500 p-0 shadow-inner transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${content.siteSettings?.emailFaviconEnabled !== false ? 'bg-sky-600' : 'bg-slate-500'}`}
+                      style={{ backgroundColor: content.siteSettings?.emailFaviconEnabled !== false ? '#0284c7' : '#64748b' }}
+                    >
+                      <span
+                        className="absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full border border-slate-300 bg-white shadow-md transition-[left]"
+                        style={{ left: content.siteSettings?.emailFaviconEnabled !== false ? 'calc(100% - 1.375rem)' : '0.125rem' }}
+                      />
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-            <label className="block text-xs font-semibold text-slate-700">Meta description
-              <textarea rows={4} maxLength={320} value={content.siteSettings?.metaDescription || ''} onChange={(event) => updateSiteSettings('metaDescription', event.target.value)} className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-              <span className="mt-1 block text-right text-[10px] text-slate-500">{(content.siteSettings?.metaDescription || '').length}/320</span>
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">Canonical portfolio URL
-              <input type="url" value={content.profile?.website || ''} onChange={(event) => updateProfile('website', event.target.value)} placeholder="https://your-domain.example" className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-            </label>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Open Graph</h4>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-xs font-semibold text-slate-700">Open Graph title
+                  <input value={content.siteSettings?.openGraphTitle || ''} maxLength={120} onChange={(event) => updateSiteSettings('openGraphTitle', event.target.value)} placeholder={content.siteSettings?.siteTitle || 'Use page title'} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">Open Graph description
+                  <textarea rows={3} maxLength={320} value={content.siteSettings?.openGraphDescription || ''} onChange={(event) => updateSiteSettings('openGraphDescription', event.target.value)} placeholder={content.siteSettings?.metaDescription || 'Use meta description'} className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Twitter / X</h4>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-xs font-semibold text-slate-700">Twitter/X card
+                  <select value={content.siteSettings?.twitterCard || 'summary_large_image'} onChange={(event) => updateSiteSettings('twitterCard', event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100">
+                    <option value="summary_large_image">Large image card</option>
+                    <option value="summary">Summary card</option>
+                  </select>
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">Twitter/X title
+                  <input value={content.siteSettings?.twitterTitle || ''} maxLength={120} onChange={(event) => updateSiteSettings('twitterTitle', event.target.value)} placeholder={content.siteSettings?.openGraphTitle || content.siteSettings?.siteTitle || 'Use Open Graph title'} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700 md:col-span-2">Twitter/X description
+                  <textarea rows={3} maxLength={320} value={content.siteSettings?.twitterDescription || ''} onChange={(event) => updateSiteSettings('twitterDescription', event.target.value)} placeholder={content.siteSettings?.openGraphDescription || content.siteSettings?.metaDescription || 'Use Open Graph description'} className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                </label>
+              </div>
+            </section>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div><h4 className="text-xs font-semibold text-slate-800">Search &amp; social preview</h4><p className="mt-1 text-[10px] text-slate-500">Preview reflects the current draft values.</p></div>
@@ -1648,7 +1712,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
               </div>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,.8fr)] sm:items-center">
                 <div className="min-w-0">
-                  <p className="truncate text-[10px] text-emerald-700">{content.profile?.website || 'https://your-domain.example'}</p>
+                  <p className="truncate text-[10px] text-emerald-700">{content.siteSettings?.canonicalUrl || window.location.origin}</p>
                   <p className="mt-1 truncate text-base font-semibold text-sky-700">{content.siteSettings?.siteTitle || 'Portfolio title'}</p>
                   <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{content.siteSettings?.metaDescription || 'Your search and social description will appear here.'}</p>
                 </div>
