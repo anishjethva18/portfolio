@@ -239,7 +239,7 @@ export const AdminPanelLayout: React.FC<{
       {/* Main Content Area */}
       <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="relative z-10 flex min-h-[60px] shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-2.5 sm:min-h-[68px] sm:gap-3 sm:px-7">
+        <header className="relative z-20 flex min-h-[60px] shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-2.5 sm:min-h-[68px] sm:gap-3 sm:px-7">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
             <button
               onClick={() => setMobileMenuOpen(true)}

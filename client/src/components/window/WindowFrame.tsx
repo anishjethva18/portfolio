@@ -507,7 +507,7 @@ export const WindowFrame: React.FC<WindowFrameProps> = ({ windowState, children 
 
       {/* Main Window Body */}
       <div
-        className="relative flex-1 overflow-hidden bg-white dark:bg-[#1e1e20] text-slate-900 dark:text-slate-100 font-sans flex flex-col h-full"
+        className="relative flex-1 min-h-0 overflow-hidden bg-white dark:bg-[#1e1e20] text-slate-900 dark:text-slate-100 font-sans flex flex-col h-full"
         onMouseDown={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('[data-window-header="true"]')) {
