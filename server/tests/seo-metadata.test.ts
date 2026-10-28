@@ -56,6 +56,10 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
   assert.match(rendered, /<title data-seo="title">Published Homepage Title<\/title>/);
   assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
   assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/"/);
+  assert.match(rendered, /rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
+  assert.match(rendered, /name="twitter:title" content="Published Twitter title"/);
+  assert.match(rendered, /name="twitter:description" content="Published Twitter description\."/);
+  assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
   const jsonLdText = rendered.match(/<script id="website-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(jsonLdText);
   assert.deepEqual(JSON.parse(jsonLdText), {
@@ -64,6 +68,41 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
     name: 'Published Site Name',
     url: 'https://portfolio.example.test/',
   });
+});
+
+test('homepage metadata replaces duplicate tags and makes configured image URLs absolute', async () => {
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  const duplicatedHtml = html.replace(
+    '</head>',
+    `<meta name="description" content="duplicate" />
+    <meta property="og:image" content="/old-image.png" />
+    <meta name="twitter:image" content="/old-image.png" />
+    <link rel="canonical" href="/old-canonical" />
+    <link rel="icon" href="/old-icon.png" />
+    <script id="website-jsonld" type="application/ld+json">{}</script>
+    </head>`,
+  );
+  const rendered = renderSeoMetadataHtml(duplicatedHtml, publishedContent, 'https://portfolio.example.test/');
+
+  for (const selector of [
+    /<meta\s+name="description"/gi,
+    /property="og:image"/gi,
+    /name="twitter:image"/gi,
+    /rel="canonical"/gi,
+    /rel="icon"/gi,
+    /id="website-jsonld"/gi,
+  ]) {
+    assert.equal(rendered.match(selector)?.length, 1, `expected exactly one match for ${selector}`);
+  }
+
+  for (const url of [
+    rendered.match(/rel="icon" href="([^"]+)"/)?.[1],
+    rendered.match(/property="og:image" content="([^"]+)"/)?.[1],
+    rendered.match(/name="twitter:image" content="([^"]+)"/)?.[1],
+  ]) {
+    assert.ok(url);
+    assert.equal(new URL(url).origin, 'https://portfolio.example.test');
+  }
 });
 
 test('empty settings use safe absolute defaults and untrusted text is escaped', () => {

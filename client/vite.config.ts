@@ -81,11 +81,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
-        // Produce readable, consistent asset filenames while keeping a short hash for cache-busting.
-        // Format examples: assets/AboutApp-<hash>.js, assets/index-<hash>.css
-        entryFileNames: 'assets/[name].js',
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name][extname]',
+        // Keep every deployment's entry, lazy chunks, and assets versioned together.
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
 
