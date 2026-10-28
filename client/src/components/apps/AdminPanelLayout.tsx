@@ -111,7 +111,7 @@ export const AdminPanelLayout: React.FC<{
   const activeGroup = navGroups.find((group) => group.items.some((item) => item.id === activeTab))?.label || 'Workspace';
 
   return (
-    <div className={`admin-panel-shell admin-theme-${theme} relative flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-[#f3f8fd] font-sans text-slate-700`}>
+    <div className={`admin-panel-shell admin-theme-${theme} absolute inset-0 flex min-h-0 min-w-0 overflow-hidden bg-[#f3f8fd] font-sans text-slate-700`}>
       {/* Sidebar (Desktop) */}
       <aside className="w-[252px] bg-white/95 border-r border-slate-200/80 flex flex-col shrink-0 hidden lg:flex shadow-[8px_0_30px_rgba(30,64,175,0.03)]">
         {/* Brand header */}
@@ -237,9 +237,9 @@ export const AdminPanelLayout: React.FC<{
       )}
 
       {/* Main Content Area */}
-      <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
         {/* Top Header */}
-        <header className="relative z-20 flex min-h-[60px] shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-2.5 sm:min-h-[68px] sm:gap-3 sm:px-7">
+        <header className="sticky top-0 z-20 flex min-h-[60px] shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-2.5 sm:min-h-[68px] sm:gap-3 sm:px-7">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -284,7 +284,7 @@ export const AdminPanelLayout: React.FC<{
         </header>
 
         {/* View Content */}
-        <main className={`admin-panel-scroll h-0 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-auto p-4 md:p-7 ${theme === 'dark' ? 'bg-[#0b0e14] text-slate-100' : 'bg-gradient-to-br from-[#f5faff] via-[#f8fbff] to-[#edf6ff] text-slate-800'}`}>
+        <main className={`admin-panel-scroll min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-auto p-4 md:p-7 ${theme === 'dark' ? 'bg-[#0b0e14] text-slate-100' : 'bg-gradient-to-br from-[#f5faff] via-[#f8fbff] to-[#edf6ff] text-slate-800'}`}>
           {pageHeadingTab && (
             <div className="admin-page-heading mx-0 flex w-full min-w-0 max-w-[1430px] items-end justify-between gap-5 pb-5 pt-2">
               <div>
