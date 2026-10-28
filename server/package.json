@@ -19,7 +19,7 @@
     "test:limitations": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/comprehensive-limitations.test.ts",
     "test:e2e": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/e2e-walkthrough.test.ts",
     "test:all": "npm run test && npm run test:limitations && npm run test:e2e && npm run test:seo-metadata",
-    "test:seo-metadata": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test server/tests/seo-metadata.test.ts",
+    "test:seo-metadata": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test server/tests/seo-metadata.test.ts server/tests/portfolio-media-headers.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "bootstrap:admin": "cd .. && node -r ./server/loadEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/scripts/bootstrapAdmin.ts",
     "create-admin": "cd .. && node -r ./server/loadEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/scripts/bootstrapAdmin.ts"

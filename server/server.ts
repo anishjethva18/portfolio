@@ -34,6 +34,7 @@ import { widgetsRouter } from './routes/widgets';
 import { fileService } from './services/fileService';
 import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
+import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
 import {
   buildContentSecurityPolicyDirectives,
   buildCorsPolicy,
@@ -350,6 +351,7 @@ async function startServer() {
         'Cache-Control',
         isAdmin && !profileReferences && !projectReferences ? 'private, no-store' : 'public, max-age=3600'
       );
+      setPortfolioMediaResourcePolicy(res, profileReferences || projectReferences);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       if (safePath && fs.existsSync(safePath)) {
         res.sendFile(safePath, (error) => {

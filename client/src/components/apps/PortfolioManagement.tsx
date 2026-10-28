@@ -1684,12 +1684,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
             <section className="space-y-4">
               <h4 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Twitter / X</h4>
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="block text-xs font-semibold text-slate-700">Twitter/X card
-                  <select value={content.siteSettings?.twitterCard || 'summary_large_image'} onChange={(event) => updateSiteSettings('twitterCard', event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100">
-                    <option value="summary_large_image">Large image card</option>
-                    <option value="summary">Summary card</option>
-                  </select>
-                </label>
+                <div className="block text-xs font-semibold text-slate-700">Twitter/X card
+                  <p className="mt-1.5 flex h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800">Large image card</p>
+                </div>
                 <label className="block text-xs font-semibold text-slate-700">Twitter/X title
                   <input value={content.siteSettings?.twitterTitle || ''} maxLength={120} onChange={(event) => updateSiteSettings('twitterTitle', event.target.value)} placeholder={content.siteSettings?.openGraphTitle || content.siteSettings?.siteTitle || 'Use Open Graph title'} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
                 </label>

@@ -111,6 +111,13 @@ test('empty settings use safe absolute defaults and untrusted text is escaped', 
   assert.equal(defaults.faviconUrl, 'https://portfolio.example.test/avatar.png');
   assert.equal(defaults.socialImageUrl, 'https://portfolio.example.test/avatar.png');
   assert.equal(defaults.twitterCard, 'summary_large_image');
+  assert.equal(buildSeoMetadata({
+    siteSettings: {
+      twitterCard: 'summary',
+      openGraphTitle: 'Open Graph fallback title',
+      openGraphDescription: 'Open Graph fallback description.',
+    },
+  }, 'https://portfolio.example.test/').twitterCard, 'summary_large_image');
   const invalidImageFallback = buildSeoMetadata(
     { profile: { avatar: 'javascript:alert(1)' }, siteSettings: { socialImageUrl: 'javascript:alert(2)' } },
     'https://portfolio.example.test/',

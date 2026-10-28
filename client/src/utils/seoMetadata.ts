@@ -29,7 +29,7 @@ export interface SeoMetadata {
   socialImageUrl: string;
   openGraphTitle: string;
   openGraphDescription: string;
-  twitterCard: 'summary' | 'summary_large_image';
+  twitterCard: 'summary_large_image';
   twitterTitle: string;
   twitterDescription: string;
 }
@@ -100,9 +100,7 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
   const socialImageUrl = resolvePublicUrl(settings.socialImageUrl, baseUrl, profileAvatarUrl);
   const openGraphTitle = safeText(settings.openGraphTitle, title, 120);
   const openGraphDescription = safeText(settings.openGraphDescription, description, 320);
-  const twitterCard = settings.twitterCard === 'summary' || settings.twitterCard === 'summary_large_image'
-    ? settings.twitterCard
-    : 'summary_large_image';
+  const twitterCard = 'summary_large_image';
 
   return {
     siteName,

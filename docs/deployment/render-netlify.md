@@ -92,6 +92,7 @@ Har code/config change ke baad repo root mein:
 git status --short
 git diff --check
 npm --prefix server run test:email
+npm --prefix server run test:seo-metadata
 npm --prefix server run typecheck
 npm --prefix server run build
 npm --prefix client run typecheck
@@ -256,6 +257,29 @@ Quick Tunnel temporary/public hai aur local app/API ko internet se reachable ban
 ### Existing local content ko live deployment par lana
 
 Naya Render service apne aap aapke computer ke MongoDB ya `server/storage/` ko copy nahi karta. Pehle local admin se backup lein; phir deployed admin ke Backup & Restore section se supported backup restore karein, aur zaroori uploaded files ko persistent storage mein rakhein. Restore ke baad public site, admin, resume, favicon, social image aur uploads verify karein. Local `server/storage/` ko GitHub par push na karein.
+
+### SEO, Open Graph image aur favicon verification
+
+The homepage metadata is rewritten at request time by the Netlify Edge Function
+using the public `/api/seo-metadata` endpoint. Admin-published metadata therefore
+does not require a frontend rebuild. Publicly referenced portfolio media is
+served with `Cross-Origin-Resource-Policy: cross-origin` so third-party social
+preview tools can embed it; unreferenced/private media remains
+`same-origin`. After deploying backend changes, verify the live metadata and
+configured image URLs without sending cookies:
+
+```powershell
+curl.exe -sS "https://anishjethva.netlify.app/api/seo-metadata"
+curl.exe -sS -D - -o NUL "https://anishjethva.netlify.app/api/portfolio-media/FILE-NAME.png?id=file-PUBLISHED-ID"
+```
+
+Confirm the image response is `200`, has an image `Content-Type`, and returns
+`Cross-Origin-Resource-Policy: cross-origin` for media referenced by published
+content. Check the URL's `og:image` and favicon references in the raw homepage
+HTML. Public media responses may be cached for up to one hour; purge the Netlify
+cache if available or allow the old response to expire before concluding the
+header change did not take effect. Private/unpublished media must not become
+public as part of this verification.
 
 ## Troubleshooting
 
