@@ -93,6 +93,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
 
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
+  const projectsRef = useRef<any[]>([]);
   const [publishedProjects, setPublishedProjects] = useState<any[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [usersList, setUsersList] = useState<any[]>([]);
@@ -125,9 +126,24 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   const draftDirty = Object.values(draftDirtySections).some(Boolean);
   const [projectFormDirty, setProjectFormDirty] = useState(false);
   const [projectsDirty, setProjectsDirty] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isPublishingDraft, setIsPublishingDraft] = useState(false);
+  const draftActionInProgressRef = useRef(false);
+  const draftEditsRef = useRef({
+    ...draftDirtySections,
+    projectForm: projectFormDirty,
+    projects: projectsDirty,
+  });
+  draftEditsRef.current = {
+    ...draftDirtySections,
+    projectForm: projectFormDirty,
+    projects: projectsDirty,
+  };
   const [draftSavedAfterChanges, setDraftSavedAfterChanges] = useState(false);
   const draftAvailabilityRequestRef = useRef(0);
   const pendingProjectDraftIds = useRef<Set<string>>(new Set());
+  const pendingProjectDeleteIds = useRef<Set<string>>(new Set());
+  const projectsMutationVersionRef = useRef(0);
   const savePendingProjectsRef = useRef<() => Promise<void>>(async () => undefined);
   const [hasUnpublishedDraft, setHasUnpublishedDraft] = useState<boolean | null>(null);
   const [backupStatus, setBackupStatus] = useState<{ latest: any; scheduled: boolean } | null>(null);
@@ -411,6 +427,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const fetchProjects = async (silent = false) => {
+    const requestMutationVersion = projectsMutationVersionRef.current;
     if (!silent) setProjectsLoading(true);
     try {
       const res = await apiFetch('/api/admin/projects');
@@ -418,7 +435,14 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       if (!res.ok || !data.success || !Array.isArray(data.projects)) {
         throw new Error(data.error || 'Projects could not be loaded.');
       }
-      updateIfChanged(setProjects, data.projects);
+      if (
+        requestMutationVersion === projectsMutationVersionRef.current &&
+        pendingProjectDraftIds.current.size === 0 &&
+        pendingProjectDeleteIds.current.size === 0
+      ) {
+        projectsRef.current = data.projects;
+        updateIfChanged(setProjects, data.projects);
+      }
       updateIfChanged(setPublishedProjects, Array.isArray(data.publishedProjects) ? data.publishedProjects : []);
     } catch (err: any) {
       if (silent) console.error('[AdminPanel] Background project refresh failed.', err);
@@ -431,6 +455,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   useEffect(() => {
     const handleDraftRestored = () => {
       pendingProjectDraftIds.current.clear();
+      pendingProjectDeleteIds.current.clear();
       setDraftDirtySections({ portfolio: false, media: false, advanced: false });
       setProjectFormDirty(false);
       setProjectsDirty(false);
@@ -548,44 +573,62 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const handleSaveProject = async (proj: any) => {
-    try {
-      const isNew = !proj.id;
-      const url = isNew ? '/api/admin/projects' : `/api/admin/projects/${proj.id}`;
-      const method = isNew ? 'POST' : 'PUT';
-      
-      const res = await apiFetch(url, {
-        method,
-        body: JSON.stringify(proj)
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data.error || 'Failed to save project.');
-        return false;
-      }
-      if (!data.project || typeof data.project.id !== 'string') {
-        throw new Error('Project was saved but the server did not return its updated draft record.');
-      }
-      setProjects((current) => {
-        const index = current.findIndex((project) => project.id === data.project.id);
-        if (index < 0) return [...current, data.project];
-        return current.map((project) => project.id === data.project.id ? data.project : project);
-      });
-      setSuccessMsg(isNew ? 'Project created in draft.' : 'Project draft updated. Publish to apply this change to the live Projects app.');
-      setDraftSavedAfterChanges(await fetchDraftAvailability());
-      return true;
-    } catch (err: any) {
-      setError(err.message || 'Failed to save project.');
-      return false;
+    const isNew = !proj.id;
+    const id = isNew ? `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : String(proj.id);
+    const currentProject = projectsRef.current.find((project) => project.id === id);
+    const nextProject = {
+      ...currentProject,
+      ...proj,
+      id,
+      sortOrder: proj.sortOrder ?? currentProject?.sortOrder ?? projectsRef.current.length,
+    };
+    const nextProjects = currentProject
+      ? projectsRef.current.map((project) => project.id === id ? nextProject : project)
+      : [...projectsRef.current, nextProject];
+    projectsRef.current = nextProjects;
+    projectsMutationVersionRef.current += 1;
+    setProjects(nextProjects);
+    pendingProjectDeleteIds.current.delete(id);
+    pendingProjectDraftIds.current.add(id);
+    setProjectsDirty(true);
+    setDraftSavedAfterChanges(false);
+    setError(null);
+    setSuccessMsg('Project changes are ready to save. Click Save draft to stage them before publishing.');
+    return true;
+  };
+
+  const persistProjectDraft = async (project: any) => {
+    const isNew = String(project.id).startsWith('local_');
+    const response = await apiFetch(
+      isNew ? '/api/admin/projects' : `/api/admin/projects/${encodeURIComponent(project.id)}`,
+      {
+        method: isNew ? 'POST' : 'PUT',
+        body: JSON.stringify(project),
+      },
+    );
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Project draft could not be saved.');
+    if (!data.project || typeof data.project.id !== 'string') {
+      throw new Error('Project was saved but the server did not return its updated draft record.');
     }
+
+    const nextProjects = projectsRef.current.map((item) => item.id === project.id ? data.project : item);
+    projectsRef.current = nextProjects;
+    projectsMutationVersionRef.current += 1;
+    setProjects(nextProjects);
+    if (isNew) pendingProjectDraftIds.current.delete(project.id);
   };
 
   const handleToggleProjectVisibility = async (id: string, visible: boolean) => {
-    const project = projects.find((item) => item.id === id);
+    const project = projectsRef.current.find((item) => item.id === id);
     if (!project) {
       setError('Project is no longer in the current draft. Refresh the Projects section and try again.');
       return false;
     }
-    setProjects((current) => current.map((item) => item.id === id ? { ...item, visible } : item));
+    const nextProjects = projectsRef.current.map((item) => item.id === id ? { ...item, visible } : item);
+    projectsRef.current = nextProjects;
+    projectsMutationVersionRef.current += 1;
+    setProjects(nextProjects);
     pendingProjectDraftIds.current.add(id);
     setProjectsDirty(true);
     setDraftSavedAfterChanges(false);
@@ -595,10 +638,12 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const handleReorderProjects = (orderedIds: string[]) => {
-    const currentById = new Map(projects.map((project) => [project.id, project]));
+    const currentById = new Map(projectsRef.current.map((project) => [project.id, project]));
     const ordered = orderedIds.map((id) => currentById.get(id)).filter(Boolean) as any[];
-    if (ordered.length !== projects.length) return;
+    if (ordered.length !== projectsRef.current.length) return;
     const next = ordered.map((project, sortOrder) => ({ ...project, sortOrder }));
+    projectsRef.current = next;
+    projectsMutationVersionRef.current += 1;
     setProjects(next);
     next.forEach((project) => pendingProjectDraftIds.current.add(project.id));
     setProjectsDirty(true);
@@ -609,20 +654,38 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
 
   const savePendingProjectChanges = async () => {
     const ids = Array.from(pendingProjectDraftIds.current);
+    const deleteIds = Array.from(pendingProjectDeleteIds.current);
     let allSaved = true;
     for (const id of ids) {
-      const project = projects.find((item) => item.id === id);
+      const project = projectsRef.current.find((item) => item.id === id);
       if (!project) {
         setError(`Project ${id} is no longer in the list. Refresh Projects and try again.`);
         allSaved = false;
         continue;
       }
-      if (await handleSaveProject(project)) pendingProjectDraftIds.current.delete(id);
-      else allSaved = false;
+      try {
+        await persistProjectDraft(project);
+        pendingProjectDraftIds.current.delete(id);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Project draft could not be saved.');
+        allSaved = false;
+      }
     }
-    setProjectsDirty(pendingProjectDraftIds.current.size > 0);
+    for (const id of deleteIds) {
+      try {
+        const response = await apiFetch(`/api/admin/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Project removal could not be saved.');
+        pendingProjectDeleteIds.current.delete(id);
+        projectsMutationVersionRef.current += 1;
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Project removal could not be saved.');
+        allSaved = false;
+      }
+    }
+    const hasPendingChanges = pendingProjectDraftIds.current.size > 0 || pendingProjectDeleteIds.current.size > 0;
+    setProjectsDirty(hasPendingChanges);
     if (!allSaved) throw new Error('Some project changes could not be saved. Review the project error and try Save draft again.');
-    if (ids.length) setSuccessMsg('Project changes saved to draft. Publish to apply them to the live Projects app.');
   };
   savePendingProjectsRef.current = savePendingProjectChanges;
 
@@ -639,6 +702,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   useEffect(() => {
     const handleDiscardUnsavedEdits = () => {
       pendingProjectDraftIds.current.clear();
+      pendingProjectDeleteIds.current.clear();
       setProjectsDirty(false);
       setDraftSavedAfterChanges(false);
       setError(null);
@@ -652,6 +716,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   useEffect(() => {
     const handleDraftDiscard = () => {
       pendingProjectDraftIds.current.clear();
+      pendingProjectDeleteIds.current.clear();
       setProjectsDirty(false);
       setDraftSavedAfterChanges(false);
       void fetchProjects();
@@ -662,24 +727,30 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   }, []);
 
   const handleDeleteProject = async (id: string) => {
-    if (!await confirm({ title: 'Delete project?', message: 'This project will be permanently removed from the portfolio.', confirmLabel: 'Delete project', destructive: true })) return false;
-    try {
-      const res = await apiFetch(`/api/admin/projects/${id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data.error || 'Failed to delete project.');
-        return false;
-      }
-      setSuccessMsg('Project deleted.');
-      setProjects((current) => current.filter((project) => project.id !== id));
-      pendingProjectDraftIds.current.delete(id);
-      setProjectsDirty(pendingProjectDraftIds.current.size > 0);
-      await fetchDraftAvailability();
-      return true;
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete project.');
+    if (!await confirm({
+      title: 'Delete project?',
+      message: 'The project will be removed from your draft. Save draft, then publish to remove it from the live portfolio.',
+      confirmLabel: 'Delete project',
+      destructive: true,
+    })) return false;
+    const project = projectsRef.current.find((item) => item.id === id);
+    if (!project) {
+      setError('Project is no longer in the current draft. Refresh the Projects section and try again.');
       return false;
     }
+
+    const nextProjects = projectsRef.current.filter((item) => item.id !== id);
+    projectsRef.current = nextProjects;
+    projectsMutationVersionRef.current += 1;
+    setProjects(nextProjects);
+    const wasLocalOnly = id.startsWith('local_');
+    pendingProjectDraftIds.current.delete(id);
+    if (!wasLocalOnly) pendingProjectDeleteIds.current.add(id);
+    setProjectsDirty(pendingProjectDraftIds.current.size > 0 || pendingProjectDeleteIds.current.size > 0);
+    setDraftSavedAfterChanges(false);
+    setError(null);
+    setSuccessMsg('Project removal is ready to save. Click Save draft to stage it before publishing.');
+    return true;
   };
 
   const handleReplyToContact = async (id: string, message: string) => {
@@ -806,6 +877,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       if (!response.ok || !data.success) throw new Error(data.error || 'Portfolio restore failed.');
       setSuccessMsg('Backup restored.');
       pendingProjectDraftIds.current.clear();
+      pendingProjectDeleteIds.current.clear();
       setDraftDirtySections({ portfolio: false, media: false, advanced: false });
       setProjectFormDirty(false);
       setProjectsDirty(false);
@@ -908,6 +980,84 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   const btnSecondaryClass = isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-800 hover:bg-slate-700 text-slate-200';
   const dimTextClass = isLight ? 'text-slate-500' : 'text-slate-400';
 
+  const saveAllDraftChanges = async (operationAlreadyLocked = false): Promise<boolean> => {
+    if (!operationAlreadyLocked && draftActionInProgressRef.current) return false;
+    if (!operationAlreadyLocked) draftActionInProgressRef.current = true;
+    setIsSavingDraft(true);
+    setError(null);
+    try {
+      const actions = new Map<string, () => Promise<void>>();
+      window.dispatchEvent(new CustomEvent<AdminDraftSaveDetail>('admin-save-content-draft', {
+        detail: { register: (key, save) => actions.set(key, save) },
+      }));
+      const dirty = draftEditsRef.current;
+      const requiredActions: Array<[string, boolean]> = [
+        ['portfolio', dirty.portfolio],
+        ['media', dirty.media],
+        ['advanced', dirty.advanced],
+        ['project-form', dirty.projectForm],
+        ['project-staging', dirty.projects || dirty.projectForm],
+      ];
+      for (const [key, isDirty] of requiredActions) {
+        if (isDirty && !actions.has(key)) {
+          throw new Error(`The ${key} editor is not ready to save. Keep this section open and try again.`);
+        }
+      }
+      for (const [key, isDirty] of requiredActions) {
+        if (isDirty) await actions.get(key)?.();
+      }
+      setDraftDirtySections({ portfolio: false, media: false, advanced: false });
+      setProjectFormDirty(false);
+      setProjectsDirty(false);
+      draftEditsRef.current = { portfolio: false, media: false, advanced: false, projectForm: false, projects: false };
+      setDraftSavedAfterChanges(await fetchDraftAvailability(true));
+      setSuccessMsg('Draft changes saved. Publish when you are ready to make them live.');
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Draft changes could not be saved.');
+      return false;
+    } finally {
+      setIsSavingDraft(false);
+      if (!operationAlreadyLocked) draftActionInProgressRef.current = false;
+    }
+  };
+
+  const publishSavedDraft = async () => {
+    if (!await confirm({
+      title: 'Publish portfolio changes?',
+      message: 'This makes the saved content and staged project changes public.',
+      confirmLabel: 'Publish changes',
+    })) return;
+    if (draftActionInProgressRef.current) return;
+    draftActionInProgressRef.current = true;
+    setIsPublishingDraft(true);
+    setError(null);
+    try {
+      const dirty = draftEditsRef.current;
+      if (dirty.portfolio || dirty.media || dirty.advanced || dirty.projectForm || dirty.projects) {
+        if (!await saveAllDraftChanges(true)) return;
+      }
+      const response = await apiFetch('/api/admin/content-studio/publish', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Saved draft changes could not be published.');
+      }
+      window.dispatchEvent(new CustomEvent('portfolio-content-published', { detail: data.published }));
+      setHasUnpublishedDraft(false);
+      setDraftSavedAfterChanges(false);
+      setSuccessMsg('Saved portfolio and project changes were published.');
+      await fetchDraftAvailability();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Saved draft changes could not be published.');
+    } finally {
+      draftActionInProgressRef.current = false;
+      setIsPublishingDraft(false);
+    }
+  };
+
   if (!user || user.role !== 'admin' || isPanelLocked) {
     return (
       <AdminLoginScreen
@@ -933,32 +1083,13 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
       setActiveTab={(t) => setActiveTab(t as AdminTab)}
       user={user}
       onLogout={handleLogout}
-      onSaveDraft={async () => {
-        setError(null);
-        try {
-          const actions = new Map<string, () => Promise<void>>();
-          window.dispatchEvent(new CustomEvent<AdminDraftSaveDetail>('admin-save-content-draft', {
-            detail: { register: (key, save) => actions.set(key, save) },
-          }));
-          if (draftDirtySections.portfolio && !actions.has('portfolio')) {
-            throw new Error('Portfolio draft editor is not ready to save. Reopen the SEO section and try again.');
-          }
-          for (const key of ['portfolio', 'media', 'advanced', 'project-form', 'project-staging']) {
-            await actions.get(key)?.();
-          }
-          setDraftDirtySections({ portfolio: false, media: false, advanced: false });
-          setProjectFormDirty(false);
-          setProjectsDirty(false);
-          setHasUnpublishedDraft(true);
-          setDraftSavedAfterChanges(true);
-          void fetchDraftAvailability();
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Draft changes could not be saved.');
-        }
-      }}
+      onSaveDraft={() => { void saveAllDraftChanges(); }}
+      onPublishDraft={() => { void publishSavedDraft(); }}
       onDiscardUnsavedChanges={() => window.dispatchEvent(new Event('admin-discard-unsaved-edits'))}
       canSaveDraft={draftDirty || projectFormDirty || projectsDirty}
       canPublishDraft={Boolean(hasUnpublishedDraft && !draftDirty && !projectFormDirty && !projectsDirty)}
+      isSavingDraft={isSavingDraft}
+      isPublishingDraft={isPublishingDraft}
       onRefreshData={refreshAll}
     >
       {/* Notifications */}
@@ -1077,7 +1208,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
             }} />
         </div>
         <div className={activeTab === 'publishing' ? 'block' : 'hidden'}>
-          <PublishingManagement active={activeTab === 'publishing'} apiFetch={apiFetch} canPublish={Boolean(hasUnpublishedDraft && !draftDirty && !projectsDirty)} onSuccess={(message) => setSuccessMsg(message)} onError={(message) => setError(message)} onStatusChange={(hasChanges) => { setHasUnpublishedDraft(hasChanges); if (!hasChanges) setDraftSavedAfterChanges(false); }} />
+          <PublishingManagement active={activeTab === 'publishing'} apiFetch={apiFetch} canPublish={Boolean(hasUnpublishedDraft && !draftDirty && !projectFormDirty && !projectsDirty)} onSuccess={(message) => setSuccessMsg(message)} onError={(message) => setError(message)} onStatusChange={(hasChanges) => { setHasUnpublishedDraft(hasChanges); if (!hasChanges) setDraftSavedAfterChanges(false); }} />
         </div>
         <div className={activeTab === 'security' ? 'block' : 'hidden'}>
           <SecurityManagement

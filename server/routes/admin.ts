@@ -516,7 +516,7 @@ function normalizeProjectInput(body: any, creating: boolean): { value?: Normaliz
     const raw = body[field] ?? (creating && field === 'category' ? 'Full Stack' : '');
     if (typeof raw !== 'string') return { error: `${field} must be text.` };
     const value = raw.trim();
-    if ((required && !value) || value.length > maxLength) {
+    if ((required && !value.trim()) || value.length > maxLength) {
       return { error: `${field} is required and must be no longer than ${maxLength} characters.` };
     }
     normalized[field] = value;
@@ -678,6 +678,67 @@ adminRouter.get('/projects/published', requireAdmin, async (_req: AuthenticatedR
     res.json({ success: true, projects });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Published projects could not be loaded.' });
+  }
+});
+
+adminRouter.post('/projects/revert-change', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { action, projectId, field } = req.body ?? {};
+    const draftProjects = await projectDraftService.getDraftProjects();
+    const publishedProjects = await ProjectModel.find()
+      .sort({ sortOrder: 1, featured: -1, createdAt: -1 })
+      .lean();
+
+    if (action === 'order') {
+      const publishedOrder = new Map(publishedProjects.map((project, index) => [project.id, project.sortOrder ?? index]));
+      for (const project of draftProjects) {
+        if (publishedOrder.has(project.id)) project.sortOrder = publishedOrder.get(project.id)!;
+      }
+    } else {
+      if (typeof projectId !== 'string' || !/^[\w-]{1,128}$/.test(projectId)) {
+        res.status(422).json({ success: false, error: 'A valid project ID is required.' });
+        return;
+      }
+      const draftIndex = draftProjects.findIndex((project) => project.id === projectId);
+      const published = publishedProjects.find((project) => project.id === projectId);
+
+      if (action === 'added') {
+        if (draftIndex < 0 || published) {
+          res.status(409).json({ success: false, error: 'This added project is no longer an unpublished draft change.' });
+          return;
+        }
+        draftProjects.splice(draftIndex, 1);
+      } else if (action === 'removed') {
+        if (draftIndex >= 0 || !published) {
+          res.status(409).json({ success: false, error: 'This removed project is no longer an unpublished draft change.' });
+          return;
+        }
+        const { _id: _mongoId, __v: _version, ...restoredProject } = published;
+        draftProjects.push(restoredProject as typeof draftProjects[number]);
+      } else if (action === 'field') {
+        const allowedFields = new Set([
+          'title', 'tagline', 'description', 'features', 'technologies', 'category', 'image',
+          'githubUrl', 'liveUrl', 'stars', 'featured', 'visible', 'slug', 'type', 'stack',
+          'screenshots', 'overview', 'summary', 'caseStudy',
+        ]);
+        if (typeof field !== 'string' || !allowedFields.has(field) || draftIndex < 0 || !published) {
+          res.status(409).json({ success: false, error: 'This project field is no longer an unpublished draft change.' });
+          return;
+        }
+        const draftProject = draftProjects[draftIndex] as unknown as Record<string, unknown>;
+        const publishedProject = published as unknown as Record<string, unknown>;
+        if (Object.prototype.hasOwnProperty.call(publishedProject, field)) draftProject[field] = publishedProject[field];
+        else delete draftProject[field];
+      } else {
+        res.status(422).json({ success: false, error: 'Unsupported project draft change.' });
+        return;
+      }
+    }
+
+    await projectDraftService.saveDraftProjects(draftProjects, req.user!.userId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Project draft change could not be reverted.' });
   }
 });
 

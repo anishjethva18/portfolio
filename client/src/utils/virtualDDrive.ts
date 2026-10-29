@@ -342,26 +342,6 @@ export const buildVirtualDDriveFiles = (
 
   createBundledMediaFiles(publicMedia).forEach(addReference);
 
-  const addPublishedImage = (id: string, value: unknown) => {
-    if (!isSafeFileUrl(value)) return;
-    const extension = getUrlExtension(value, '').toLowerCase();
-    if (!MEDIA_EXTENSIONS.has(extension)) return;
-    const urlName = pathFileName(value);
-    const name = safeName(urlName, `Image.${extension}`);
-    const fileName = /\.[a-z0-9]{1,8}$/i.test(name) ? name : `${name}.${extension}`;
-    addReference(referenceFile(
-      `virtual-d-${id}`,
-      fileName,
-      extension,
-      value,
-      D_DRIVE_FOLDER_PATHS.pictures
-    ));
-  };
-
-  addPublishedImage('profile-picture', publishedContent?.profile?.avatar);
-  addPublishedImage('social-preview-image', publishedContent?.siteSettings?.socialImageUrl);
-  addPublishedImage('website-favicon', publishedContent?.siteSettings?.faviconUrl);
-
   const disabledApps = new Set(
     Array.isArray(publishedContent?.siteSettings?.disabledApps)
       ? publishedContent.siteSettings.disabledApps.filter((id): id is string => typeof id === 'string')

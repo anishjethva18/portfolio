@@ -131,22 +131,31 @@ test('D: keeps an unmarked uploaded wallpaper visible in the Wallpapers folder',
   ));
 });
 
-test('published profile and site images appear in Pictures using their uploaded filenames', () => {
+test('published profile and site images stay out of Pictures while the published wallpaper remains available', () => {
   const publishedContent = {
     profile: { avatar: '/api/portfolio-media/Anish_Profile.png' },
     siteSettings: {
       socialImageUrl: '/api/portfolio-media/Portfolio_Preview.webp',
       faviconUrl: '/api/portfolio-media/Portfolio_Icon.png',
+      defaultWallpaperUrl: '/api/portfolio-media/Portfolio_Wallpaper.jpg',
+      defaultWallpaperName: 'Portfolio_Wallpaper.jpg',
     },
   };
   const files = buildVirtualDDriveFiles([], publishedContent);
   const pictures = files.filter((file) => file.parentId === D_DRIVE_FOLDER_PATHS.pictures && file.type === 'file');
 
-  assert.deepEqual(
-    pictures.map((file) => file.name).sort(),
-    ['Anish_Profile.png', 'Portfolio_Icon.png', 'Portfolio_Preview.webp']
-  );
-  assert.ok(pictures.every((file) => file.readOnly));
+  assert.deepEqual(pictures, []);
+  assert.ok(!files.some((file) => [
+    'Anish_Profile.png',
+    'Portfolio_Icon.png',
+    'Portfolio_Preview.webp',
+  ].includes(file.name)));
+  assert.ok(files.some((file) =>
+    file.parentId === D_DRIVE_FOLDER_PATHS.wallpapers &&
+    file.name === 'Portfolio_Wallpaper.jpg' &&
+    file.content === '/api/portfolio-media/Portfolio_Wallpaper.jpg' &&
+    file.readOnly
+  ));
   assert.equal(buildVirtualDDriveFiles([], null).filter((file) =>
     file.parentId === D_DRIVE_FOLDER_PATHS.pictures && file.type === 'file'
   ).length, 0);

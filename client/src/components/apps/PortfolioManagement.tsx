@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../../utils/apiClient';
 import { uploadPortfolioMedia } from '../../utils/uploadPortfolioMedia';
 import { mergeAdminDraft } from '../../utils/mergeAdminDraft';
+import { getContentState } from '../../utils/adminDraftStatus';
 import { getDefaultDesktopWallpaper } from '../../utils/siteAppearance';
 import { useConfirmDialog } from '../../context/ConfirmDialogContext';
 import { SkillBrandIcon } from '../common/SkillBrandIcon';
@@ -202,7 +203,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const toggleRecordExpanded = (key: string) => setExpandedRecords((current) => ({ ...current, [key]: !current[key] }));
 
   useEffect(() => {
-    onDraftChange?.(!loading && savedDraftContent !== null && JSON.stringify(content) !== JSON.stringify(savedDraftContent));
+    onDraftChange?.(!loading && savedDraftContent !== null && getContentState(content) !== getContentState(savedDraftContent));
   }, [content, loading, savedDraftContent, onDraftChange]);
 
   useEffect(() => {
@@ -315,7 +316,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       if (throwOnError) throw new Error('Portfolio settings are still loading or another save is in progress. Try again shortly.');
       return false;
     }
-    if (JSON.stringify(content) === JSON.stringify(savedDraftContent)) return false;
+    if (getContentState(content) === getContentState(savedDraftContent)) return false;
     setSaving(true);
     setSuccessMessage(null);
     setErrorMessage(null);
@@ -326,7 +327,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       setSavedDraftContent(clonePortfolioContent(savedDraft));
       setPublishedContent(data.published);
       if (typeof data.isPublished === 'boolean') onDraftSaved?.(!data.isPublished);
-      setSuccessMessage('Draft saved. Publish it when you are ready to update the live portfolio.');
+      if (!throwOnError) setSuccessMessage('Draft saved. Publish it when you are ready to update the live portfolio.');
       onSaveSuccess?.();
       return true;
     } catch (err: any) {

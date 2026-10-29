@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Braces, CloudUpload, LoaderCircle } from 'lucide-react';
 import { mergeAdminDraft } from '../../../utils/mergeAdminDraft';
+import { getContentState } from '../../../utils/adminDraftStatus';
+
+const hasMeaningfulDraftChanges = (text: string, savedText: string): boolean => {
+  try {
+    return getContentState(JSON.parse(text)) !== getContentState(JSON.parse(savedText));
+  } catch {
+    return text !== savedText;
+  }
+};
 
 interface AdminDraftSaveDetail {
   register?: (key: string, save: () => Promise<void>) => void;
@@ -20,10 +29,11 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const saveRef = useRef<() => Promise<void>>(async () => undefined);
+  const isDirty = hasMeaningfulDraftChanges(text, savedText);
 
   useEffect(() => {
-    onDraftChange?.(text !== savedText);
-  }, [text, savedText, onDraftChange]);
+    onDraftChange?.(isDirty);
+  }, [isDirty, onDraftChange]);
 
   useEffect(() => {
     if (!error) return;
@@ -60,7 +70,7 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
       if (throwOnError) throw new Error('Advanced portfolio content is still loading or saving. Try again shortly.');
       return;
     }
-    if (text === savedText) return;
+    if (!isDirty) return;
     setSaving(true);
     setError('');
     setMessage('');
@@ -83,7 +93,7 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
       const formatted = JSON.stringify(data.draft, null, 2);
       setText(formatted);
       setSavedText(formatted);
-      setMessage('Validated draft saved. Publishing remains a separate action.');
+      if (!throwOnError) setMessage('Validated draft saved. Publishing remains a separate action.');
       onDraftChange?.(false);
       await onSaved?.();
     } catch (cause: any) {
@@ -136,7 +146,7 @@ export const AdvancedContentManagement: React.FC<AdvancedContentManagementProps>
         ) : (
           <textarea aria-label="Advanced portfolio JSON draft" spellCheck={false} value={text} onChange={(event) => { setText(event.target.value); setMessage(''); }} className="admin-json-editor min-h-[55vh] w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-[11px] leading-5 text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
         )}
-        <button type="button" onClick={() => void save()} disabled={loading || saving || text === savedText} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-600 transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="button" onClick={() => void save()} disabled={loading || saving || !isDirty} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-600 transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50">
           {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
           {saving ? 'Saving JSON draft…' : 'Save JSON draft'}
         </button>

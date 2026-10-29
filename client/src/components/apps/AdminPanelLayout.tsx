@@ -34,9 +34,12 @@ export const AdminPanelLayout: React.FC<{
   user: any;
   onLogout: () => void | Promise<void>;
   onSaveDraft?: () => void;
+  onPublishDraft?: () => void;
   onDiscardUnsavedChanges?: () => void;
   canSaveDraft?: boolean;
   canPublishDraft?: boolean;
+  isSavingDraft?: boolean;
+  isPublishingDraft?: boolean;
   onRefreshData?: () => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
@@ -47,9 +50,12 @@ export const AdminPanelLayout: React.FC<{
   user,
   onLogout,
   onSaveDraft,
+  onPublishDraft,
   onDiscardUnsavedChanges,
   canSaveDraft = false,
   canPublishDraft = false,
+  isSavingDraft = false,
+  isPublishingDraft = false,
   onRefreshData,
   theme,
   onToggleTheme,
@@ -278,8 +284,8 @@ export const AdminPanelLayout: React.FC<{
               <SquarePen className="h-3 w-3 shrink-0" />
               <span className="hidden md:inline">{canSaveDraft ? 'Unsaved draft changes' : 'Saved draft'}</span>
             </button>
-            {onSaveDraft && <button onClick={onSaveDraft} disabled={!canSaveDraft} title={canSaveDraft ? "Save current content changes as a private draft" : "There are no unsaved content changes"} aria-label="Save draft" className="admin-action-button inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-sm transition hover:border-sky-200 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:transform-none sm:h-auto sm:w-auto sm:gap-1.5 sm:rounded-xl sm:px-3 sm:py-2"><CloudUpload className="h-3.5 w-3.5" /><span className="hidden sm:inline">Save draft</span></button>}
-            <button type="button" onClick={() => setActiveTab('publishing')} disabled={!canPublishDraft} title={canPublishDraft ? 'Review and publish saved draft changes' : 'Save a draft with changes before publishing'} aria-label="Publish changes" className="admin-action-button inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-r from-sky-700 to-cyan-600 text-xs font-bold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:transform-none sm:h-auto sm:w-auto sm:gap-1.5 sm:rounded-xl sm:px-3 sm:py-2"><Send className="h-3.5 w-3.5" /><span className="hidden sm:inline">Publish</span></button>
+            {onSaveDraft && <button onClick={onSaveDraft} disabled={!canSaveDraft || isSavingDraft || isPublishingDraft} title={isSavingDraft ? 'Saving draft changes' : canSaveDraft ? "Save current content changes as a private draft" : "There are no unsaved content changes"} aria-label="Save draft" className="admin-action-button inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-sm transition hover:border-sky-200 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:transform-none sm:h-auto sm:w-auto sm:gap-1.5 sm:rounded-xl sm:px-3 sm:py-2"><CloudUpload className="h-3.5 w-3.5" /><span className="hidden sm:inline">{isSavingDraft ? 'Saving…' : 'Save draft'}</span></button>}
+            <button type="button" onClick={onPublishDraft} disabled={!canPublishDraft || isSavingDraft || isPublishingDraft || !onPublishDraft} title={isPublishingDraft ? 'Publishing saved changes' : canPublishDraft ? 'Publish saved draft changes now' : 'Save a draft with changes before publishing'} aria-label="Publish changes" className="admin-action-button inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-r from-sky-700 to-cyan-600 text-xs font-bold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:transform-none sm:h-auto sm:w-auto sm:gap-1.5 sm:rounded-xl sm:px-3 sm:py-2"><Send className="h-3.5 w-3.5" /><span className="hidden sm:inline">{isPublishingDraft ? 'Publishing…' : 'Publish'}</span></button>
           </div>
         </header>
 
@@ -297,6 +303,14 @@ export const AdminPanelLayout: React.FC<{
           <div className="mx-0 w-full min-w-0 max-w-[1430px]">{children}</div>
         </main>
       </div>
+      {(isSavingDraft || isPublishingDraft) && (
+        <div className="absolute inset-0 z-[100] grid place-items-center bg-slate-950/20 p-4 backdrop-blur-[1px]">
+          <div role="status" aria-live="polite" className="inline-flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-700 shadow-xl">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" />
+            {isPublishingDraft ? 'Publishing saved changes…' : 'Saving draft changes…'}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

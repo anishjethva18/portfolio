@@ -1835,6 +1835,7 @@ async function runTests() {
           title: 'Admin CRUD integration project',
           description: 'Temporary project used by the backend integration test.',
           category: 'Testing',
+          tagline: 'Integration project ',
           technologies: ['TypeScript'],
           slug: 'admin-crud-integration-project',
           type: 'Web application',
@@ -1866,7 +1867,7 @@ async function runTests() {
         ? await fetch(`${projectEndpoint}/${encodeURIComponent(projectId)}`, {
             method: 'PUT',
             headers: adminMutationHeaders,
-            body: JSON.stringify({ title: 'Updated admin CRUD integration project' }),
+            body: JSON.stringify({ title: 'Updated admin CRUD integration project ' }),
           })
         : null;
       const updatedProjectPayload = updatedProjectResponse ? await updatedProjectResponse.json() as any : null;
@@ -1888,6 +1889,50 @@ async function runTests() {
             headers: { Cookie: `sid=${adminSession.sessionId}`, 'X-CSRF-Token': adminSession.csrfToken },
           })
         : null;
+      const revertableProject = publishedProjectsPayload.projects[0];
+      const changedProjectLiveUrl = revertableProject
+        ? await fetch(`${projectEndpoint}/${encodeURIComponent(revertableProject.id)}`, {
+            method: 'PUT',
+            headers: adminMutationHeaders,
+            body: JSON.stringify({ liveUrl: 'https://draft-only.example.test' }),
+          })
+        : null;
+      const revertedProjectField = revertableProject
+        ? await fetch(`${projectEndpoint}/revert-change`, {
+            method: 'POST',
+            headers: adminMutationHeaders,
+            body: JSON.stringify({ action: 'field', projectId: revertableProject.id, field: 'liveUrl' }),
+          })
+        : null;
+      const revertedProjectDraftsResponse = await fetch(projectEndpoint, { headers: { Cookie: `sid=${adminSession.sessionId}` } });
+      const revertedProjectDraftsPayload: any = await revertedProjectDraftsResponse.json();
+      const revertedProject = revertableProject
+        ? revertedProjectDraftsPayload.projects.find((project: any) => project.id === revertableProject.id)
+        : null;
+      const temporaryDraftProjectResponse = await fetch(projectEndpoint, {
+        method: 'POST',
+        headers: adminMutationHeaders,
+        body: JSON.stringify({
+          title: 'Temporary draft revert project',
+          description: 'Verifies removing an added project from the draft.',
+          category: 'Testing',
+        }),
+      });
+      const temporaryDraftProjectPayload: any = await temporaryDraftProjectResponse.json();
+      const revertedAddedProject = temporaryDraftProjectPayload.project?.id
+        ? await fetch(`${projectEndpoint}/revert-change`, {
+            method: 'POST',
+            headers: adminMutationHeaders,
+            body: JSON.stringify({ action: 'added', projectId: temporaryDraftProjectPayload.project.id }),
+          })
+        : null;
+      const afterRevertAddedProjectsResponse = await fetch(projectEndpoint, { headers: { Cookie: `sid=${adminSession.sessionId}` } });
+      const afterRevertAddedProjectsPayload: any = await afterRevertAddedProjectsResponse.json();
+      assert(Boolean(changedProjectLiveUrl?.ok && revertedProjectField?.ok && revertedProject?.liveUrl === revertableProject?.liveUrl),
+        'Admin can revert an individual project field to its published value');
+      assert(Boolean(temporaryDraftProjectResponse.ok && revertedAddedProject?.ok &&
+        !afterRevertAddedProjectsPayload.projects.some((project: any) => project.id === temporaryDraftProjectPayload.project.id),
+      ), 'Admin can remove a newly added project from the saved draft without publishing');
       const auditResponse = await fetch(`http://127.0.0.1:${adminApiPort}/api/admin/audit-logs`, {
         headers: { Cookie: `sid=${adminSession.sessionId}` },
       });
@@ -1969,7 +2014,8 @@ async function runTests() {
       assert(listedProjectsResponse.ok && listedProjectsPayload.projects.some((project: any) => project.id === projectId), 'Admin can read the created project from MongoDB');
       assert(publishedProjectsStillPrivate, 'Published project comparison endpoint excludes staged projects until publication');
       assert(listedProjectsPayload.projects.find((project: any) => project.id === projectId)?.caseStudy?.engineeringHighlights?.[0] === 'Validated staged persistence', 'Rich project fields persist in the private project draft');
-      assert(updatedProjectResponse?.ok === true && updatedProjectPayload?.project?.title === 'Updated admin CRUD integration project', 'Admin can update a persistent project');
+      assert(listedProjectsPayload.projects.find((project: any) => project.id === projectId)?.tagline === 'Integration project', 'Project draft trims trailing whitespace from text fields');
+      assert(updatedProjectResponse?.ok === true && updatedProjectPayload?.project?.title === 'Updated admin CRUD integration project', 'Admin project updates trim trailing whitespace from text fields');
       assert(hiddenProjectResponse?.ok === true && hiddenProjectPayload?.project?.visible === false && hiddenDraftProjectsPayload.projects.find((project: any) => project.id === projectId)?.visible === false, 'Project visibility toggles persist in the private project draft');
       assert(deletedProjectResponse?.ok === true, 'Admin can delete a project after confirmation through the protected API');
       assert(auditResponse.ok && Boolean(persistedCreateAudit) && auditPayload.logs.some((log: any) => log.id === persistedCreateAudit?.id), 'Admin actions persist in MongoDB-backed audit history');

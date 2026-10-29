@@ -5,6 +5,7 @@ import { ProjectData } from '../../types';
 import { PROJECTS_DATA } from '../../data/portfolioData';
 import { uploadPortfolioMedia } from '../../utils/uploadPortfolioMedia';
 import { trackPortfolioAnalytics } from '../../utils/analytics';
+import { normalizeProjectDemoUrl } from '../../utils/projectUrls';
 import {
   Search,
   ExternalLink,
@@ -111,6 +112,9 @@ export const ProjectsApp: React.FC = () => {
   }, [addNotification, projectLoadAttempt]);
 
   const categories = ['All', ...new Set(projects.map((project) => project.category).filter(Boolean))];
+  const activeLiveDemoUrl = activeProject?.liveUrl
+    ? normalizeProjectDemoUrl(activeProject.liveUrl)
+    : null;
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch =
@@ -732,15 +736,20 @@ export const ProjectsApp: React.FC = () => {
               )}
 
               {activeProject.liveUrl && (
-                <button
+                <a
+                  href={activeLiveDemoUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs sm:text-sm font-bold hover:bg-blue-700 transition-colors cursor-pointer"
-                  onClick={() => {
-                    openApp('browser', { initialUrl: activeProject.liveUrl });
-                    setActiveProject(null);
+                  onClick={(event) => {
+                    if (!activeLiveDemoUrl) {
+                      event.preventDefault();
+                      addNotification({ title: 'Invalid project link', message: 'This project does not have a valid HTTP or HTTPS live demo URL.', type: 'error' });
+                    }
                   }}
                 >
                   <ExternalLink className="w-4 h-4" /> Open Live Demo
-                </button>
+                </a>
               )}
             </div>
           </div>

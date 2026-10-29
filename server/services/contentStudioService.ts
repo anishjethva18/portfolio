@@ -11,6 +11,7 @@ const SENSITIVE_FIELD = /password|secret|token|hash|credential|api[_-]?key|admin
 
 function stableContentState(value: unknown): string {
   const sortObjectKeys = (current: unknown): unknown => {
+    if (typeof current === 'string') return current.trim();
     if (Array.isArray(current)) return current.map(sortObjectKeys);
     if (!current || typeof current !== 'object') return current;
     return Object.fromEntries(

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Edit, Trash2, Image as ImageIcon, LoaderCircle, Eye, EyeOff, FolderKanban, ArrowUp, ArrowDown } from 'lucide-react';
+import { getContentState } from '../../utils/adminDraftStatus';
 
 interface Project {
     id: string;
@@ -77,7 +78,7 @@ export const ProjectManagement: React.FC<{
     }, [localImagePreview]);
 
     useEffect(() => {
-        const dirty = Boolean(isModalOpen && initialFormDataRef.current && JSON.stringify(formData) !== JSON.stringify(initialFormDataRef.current));
+        const dirty = Boolean(isModalOpen && initialFormDataRef.current && getContentState(formData) !== getContentState(initialFormDataRef.current));
         onDraftChange?.(dirty);
     }, [formData, isModalOpen, onDraftChange]);
 
@@ -112,7 +113,7 @@ export const ProjectManagement: React.FC<{
 
     const saveCurrentDraft = async () => {
         if (saving || !isModalOpen) return;
-        if (initialFormDataRef.current && JSON.stringify(formData) === JSON.stringify(initialFormDataRef.current)) return;
+        if (initialFormDataRef.current && getContentState(formData) === getContentState(initialFormDataRef.current)) return;
         setSaving(true);
         setFormError('');
         try {

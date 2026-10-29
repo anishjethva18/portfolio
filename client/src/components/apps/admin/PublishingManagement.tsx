@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp, CirclePlus, Clock3, FileText, Globe, History, RefreshCw, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { useConfirmDialog } from '../../../context/ConfirmDialogContext';
 import { formatAdminDateTime } from '../../../utils/dateTime';
-import { getContentState, getProjectState } from '../../../utils/adminDraftStatus';
+import { getContentState, getProjectChangeEntries, getProjectState, ProjectDraftChange } from '../../../utils/adminDraftStatus';
 import { AdminPagination } from '../AdminPagination';
 import { useResponsivePageSize } from '../../../hooks/useResponsivePageSize';
 
@@ -64,6 +64,7 @@ const changeFields: Record<string, string> = {
   emailFaviconEnabled: 'Email favicon in emails', socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
   siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
   portfolioVersion: 'Portfolio version',
+  sortOrder: 'Display order',
   openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
   canonicalUrl: 'Canonical URL', twitterCard: 'Twitter/X card type',
   twitterTitle: 'Twitter/X title', twitterDescription: 'Twitter/X description',
@@ -114,9 +115,55 @@ const normalizeLegacyLayoutForDiff = (value: unknown): unknown => {
   };
 };
 
-function getChangedFields(before: unknown, after: unknown): string[] {
-  const changes = new Set<string>();
-  const normalize = (value: any): any => Array.isArray(value)
+type ContentPathPart = string | { arrayKey: string };
+interface ContentDraftChange {
+  label: string;
+  path: ContentPathPart[];
+  action: 'value' | 'replace-array' | 'array-item';
+  itemKey?: string;
+  hasPublishedItem?: boolean;
+  publishedItem?: unknown;
+  publishedIndex?: number;
+}
+
+const getArrayItemKey = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') return `value:${String(value)}`;
+  const item = value as Record<string, unknown>;
+  const key = item.appId ?? item.id ?? item._id ?? item.title ?? item.name ?? item.role ?? item.degree ?? item.label;
+  return `${typeof key}:${String(key)}`;
+};
+
+const getAtContentPath = (root: any, path: ContentPathPart[]): any => path.reduce((value, part) => {
+  if (typeof part === 'string') return value?.[part];
+  if (!Array.isArray(value)) return undefined;
+  return value.find((item) => getArrayItemKey(item) === part.arrayKey);
+}, root);
+
+const setAtContentPath = (root: any, path: ContentPathPart[], value: unknown, remove = false) => {
+  if (!path.length) throw new Error('The saved content change could not be identified.');
+  const parent = getAtContentPath(root, path.slice(0, -1));
+  const last = path[path.length - 1];
+  if (typeof last === 'string') {
+    if (!parent || typeof parent !== 'object' || Array.isArray(parent)) throw new Error('The saved content field no longer exists.');
+    if (remove) delete parent[last];
+    else parent[last] = value;
+    return;
+  }
+  if (!Array.isArray(parent)) throw new Error('The saved content item no longer exists.');
+  const index = parent.findIndex((item) => getArrayItemKey(item) === last.arrayKey);
+  if (index < 0) throw new Error('The saved content item no longer exists.');
+  if (remove) parent.splice(index, 1);
+  else parent[index] = value;
+};
+
+function getContentChangeEntries(before: unknown, after: unknown): ContentDraftChange[] {
+  const changes = new Map<string, ContentDraftChange>();
+  const addChange = (change: ContentDraftChange) => {
+    changes.set(`${change.label}:${JSON.stringify(change.path)}:${change.action}:${change.itemKey || ''}`, change);
+  };
+  const normalize = (value: any): any => typeof value === 'string'
+    ? value.trim()
+    : Array.isArray(value)
     ? value.map(normalize)
     : value && typeof value === 'object'
       ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalize(value[key])]))
@@ -139,9 +186,9 @@ function getChangedFields(before: unknown, after: unknown): string[] {
     const key = item.appId ?? item.id ?? item._id ?? item.title ?? item.name ?? item.role ?? item.degree ?? item.label;
     return typeof key === 'string' || typeof key === 'number' ? `${typeof key}:${key}` : null;
   };
-  const visit = (oldValue: any, newValue: any, path: string[]) => {
+  const visit = (oldValue: any, newValue: any, path: ContentPathPart[], labelPath: string[]) => {
     if (JSON.stringify(normalize(oldValue)) === JSON.stringify(normalize(newValue))) return;
-    if (path[0] === 'securitySettings' || path.some((key) =>
+    if (labelPath[0] === 'securitySettings' || labelPath.some((key) =>
       /password|secret|token|hash|credential|api[_-]?key|adminpin/i.test(key) ||
       ['id', '_id', '__v', 'createdAt', 'updatedAt', 'sortOrder'].includes(key)
     )) return;
@@ -160,36 +207,51 @@ function getChangedFields(before: unknown, after: unknown): string[] {
         for (const [key, oldEntry] of oldByKey) {
           const newEntry = newByKey.get(key);
           if (!newEntry) {
-            changes.add(`${formatPath(path)} · ${getArrayItemLabel(oldEntry.item, oldEntry.index)} · Removed`);
+            addChange({
+              label: `${formatPath(labelPath)} · ${getArrayItemLabel(oldEntry.item, oldEntry.index)} · Removed`,
+              path,
+              action: 'array-item',
+              itemKey: key,
+              hasPublishedItem: true,
+              publishedItem: oldEntry.item,
+              publishedIndex: oldEntry.index,
+            });
           } else {
-            visit(oldEntry.item, newEntry.item, [...path, getArrayItemLabel(newEntry.item, newEntry.index)]);
+            visit(
+              oldEntry.item,
+              newEntry.item,
+              [...path, { arrayKey: key }],
+              [...labelPath, getArrayItemLabel(newEntry.item, newEntry.index)],
+            );
           }
         }
         for (const [key, newEntry] of newByKey) {
-          if (!oldByKey.has(key)) changes.add(`${formatPath(path)} · ${getArrayItemLabel(newEntry.item, newEntry.index)} · Added`);
+          if (!oldByKey.has(key)) {
+            addChange({
+              label: `${formatPath(labelPath)} · ${getArrayItemLabel(newEntry.item, newEntry.index)} · Added`,
+              path,
+              action: 'array-item',
+              itemKey: key,
+              hasPublishedItem: false,
+            });
+          }
         }
         if (oldKeys.length === newKeys.length && oldKeys.some((key, index) => key !== newKeys[index])) {
-          changes.add(`${formatPath(path)} · Display order`);
+          addChange({ label: `${formatPath(labelPath)} · Display order`, path, action: 'replace-array' });
         }
         return;
       }
-      for (let index = 0; index < Math.max(oldItems.length, newItems.length); index += 1) {
-        if (index >= oldItems.length) {
-          changes.add(`${formatPath(path)} · ${getArrayItemLabel(newItems[index], index)} · Added`);
-        } else if (index >= newItems.length) {
-          changes.add(`${formatPath(path)} · ${getArrayItemLabel(oldItems[index], index)} · Removed`);
-        } else {
-          visit(oldItems[index], newItems[index], [...path, getArrayItemLabel(newItems[index], index)]);
-        }
-      }
+      addChange({ label: formatPath(labelPath), path, action: 'replace-array' });
       return;
     }
     if (oldValue && newValue && typeof oldValue === 'object' && typeof newValue === 'object') {
-      for (const key of new Set([...Object.keys(oldValue), ...Object.keys(newValue)])) visit(oldValue[key], newValue[key], [...path, key]);
+      for (const key of new Set([...Object.keys(oldValue), ...Object.keys(newValue)])) {
+        visit(oldValue[key], newValue[key], [...path, key], [...labelPath, key]);
+      }
       return;
     }
     if (typeof oldValue === 'boolean' && typeof newValue === 'boolean') {
-      const field = path[path.length - 1];
+      const field = labelPath[labelPath.length - 1];
       const describe = (value: boolean) => field === 'visible'
         ? value ? 'Visible' : 'Hidden'
         : field === 'active'
@@ -197,34 +259,13 @@ function getChangedFields(before: unknown, after: unknown): string[] {
           : field === 'maintenanceMode'
             ? value ? 'On' : 'Off'
             : value ? 'Enabled' : 'Disabled';
-      changes.add(`${formatPath(path)}: ${describe(oldValue)} → ${describe(newValue)}`);
+      addChange({ label: `${formatPath(labelPath)}: ${describe(oldValue)} → ${describe(newValue)}`, path, action: 'value' });
       return;
     }
-    changes.add(formatPath(path));
+    addChange({ label: formatPath(labelPath), path, action: 'value' });
   };
-  visit(normalizeLegacyLayoutForDiff(before), normalizeLegacyLayoutForDiff(after), []);
-  return [...changes];
-}
-
-function getProjectChanges(draftValue: any[], publishedValue: any[]): string[] {
-  const draft = Array.isArray(draftValue) ? draftValue : [];
-  const published = Array.isArray(publishedValue) ? publishedValue : [];
-  const draftById = new Map(draft.map((project) => [String(project.id || project._id), project]));
-  const publishedById = new Map(published.map((project) => [String(project.id || project._id), project]));
-  const fields: Record<string, string> = { title: 'Title', category: 'Category', description: 'Description', image: 'Image', visible: 'Visibility', technologies: 'Technologies', demoUrl: 'Live link', githubUrl: 'Repository link', featured: 'Featured status' };
-  const changes: string[] = [];
-  for (const [id, project] of draftById) {
-    const prior = publishedById.get(id);
-    if (!prior) { changes.push(`Projects / ${project.title || 'Untitled'} / Added`); continue; }
-    for (const field of Object.keys(fields)) {
-      if (JSON.stringify(project[field] ?? null) !== JSON.stringify(prior[field] ?? null)) changes.push(`Projects / ${project.title || prior.title || 'Project'} / ${fields[field]}`);
-    }
-  }
-  for (const [id, project] of publishedById) if (!draftById.has(id)) changes.push(`Projects / ${project.title || 'Untitled'} / Removed`);
-  const draftOrder = draft.map((project) => String(project.id || project._id));
-  const publishedOrder = published.map((project) => String(project.id || project._id));
-  if (draftOrder.length === publishedOrder.length && draftOrder.some((id, index) => id !== publishedOrder[index])) changes.push('Projects / Display order');
-  return changes;
+  visit(normalizeLegacyLayoutForDiff(before), normalizeLegacyLayoutForDiff(after), [], []);
+  return [...changes.values()];
 }
 
 export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiFetch, active = true, canPublish = false, onSuccess, onError, onStatusChange }) => {
@@ -239,7 +280,8 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expandedChanges, setExpandedChanges] = useState<Record<string, boolean>>({});
   const [showDraftChanges, setShowDraftChanges] = useState(false);
-  const [projectDraftChanges, setProjectDraftChanges] = useState<string[]>([]);
+  const [projectDraftChanges, setProjectDraftChanges] = useState<ProjectDraftChange[]>([]);
+  const [revertingChangeId, setRevertingChangeId] = useState<string | null>(null);
   const [revisionPage, setRevisionPage] = useState(1);
   const revisionListRef = useRef<HTMLOListElement>(null);
   const revisionPageSize = useResponsivePageSize(5, 180, revisionListRef);
@@ -286,7 +328,7 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
             return data.projects;
           });
       setSnapshot(state);
-      setProjectDraftChanges(getProjectChanges(draftProjects.projects, liveProjects));
+      setProjectDraftChanges(getProjectChangeEntries(draftProjects.projects, liveProjects));
       if (!Array.isArray(revisionData.revisions)) throw new Error('Version history response is invalid.');
       setRevisions(revisionData.revisions);
       setProjectsMatch(getProjectState(draftProjects.projects) === getProjectState(liveProjects));
@@ -304,11 +346,13 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
   }, [active, load]);
   const hasUnpublishedChanges = Boolean(
     snapshot &&
-      ((typeof snapshot.isPublished === 'boolean'
-        ? !snapshot.isPublished
-        : getContentState(snapshot.draft) !== getContentState(snapshot.published)) || projectsMatch === false),
+      (getContentState(snapshot.draft) !== getContentState(snapshot.published) || projectsMatch === false),
   );
-  const draftChanges = [...(snapshot ? getChangedFields(snapshot.published, snapshot.draft) : []), ...projectDraftChanges];
+  const contentDraftChanges = snapshot ? getContentChangeEntries(snapshot.published, snapshot.draft) : [];
+  const draftChanges = [
+    ...contentDraftChanges.map((change) => ({ ...change, scope: 'content' as const, id: `content:${change.label}:${JSON.stringify(change.path)}` })),
+    ...projectDraftChanges.map((change) => ({ ...change, scope: 'project' as const, id: `project:${change.projectId || ''}:${change.action}:${change.field || ''}` })),
+  ];
   const revisionPageCount = Math.max(1, Math.ceil(revisions.length / revisionPageSize));
   const currentRevisionPage = Math.min(revisionPage, revisionPageCount);
   const visibleRevisions = revisions.slice((currentRevisionPage - 1) * revisionPageSize, currentRevisionPage * revisionPageSize);
@@ -318,6 +362,64 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
   useEffect(() => {
     if (snapshot && projectsMatch !== null) onStatusChange?.(hasUnpublishedChanges);
   }, [hasUnpublishedChanges, onStatusChange, projectsMatch, snapshot]);
+
+  const revertDraftChange = async (change: (typeof draftChanges)[number]) => {
+    setRevertingChangeId(change.id);
+    try {
+      if (change.scope === 'content') {
+        if (!snapshot) throw new Error('Draft content is not loaded.');
+        const nextDraft = JSON.parse(JSON.stringify(snapshot.draft));
+        const publishedValue = getAtContentPath(snapshot.published, change.path);
+        if (change.action === 'array-item') {
+          let targetArray = getAtContentPath(nextDraft, change.path);
+          if (!Array.isArray(targetArray) && change.hasPublishedItem) {
+            setAtContentPath(nextDraft, change.path, []);
+            targetArray = getAtContentPath(nextDraft, change.path);
+          }
+          if (!Array.isArray(targetArray) || !change.itemKey) {
+            throw new Error('The saved draft list changed. Refresh and retry this action.');
+          }
+          const existingIndex = targetArray.findIndex((item) => getArrayItemKey(item) === change.itemKey);
+          if (change.hasPublishedItem) {
+            const restored = JSON.parse(JSON.stringify(change.publishedItem));
+            if (existingIndex >= 0) targetArray[existingIndex] = restored;
+            else targetArray.splice(Math.min(change.publishedIndex ?? targetArray.length, targetArray.length), 0, restored);
+          } else if (existingIndex >= 0) {
+            targetArray.splice(existingIndex, 1);
+          }
+        } else {
+          setAtContentPath(nextDraft, change.path, publishedValue, publishedValue === undefined);
+        }
+        const updated = await request('/draft', {
+          method: 'PUT',
+          body: JSON.stringify({ content: nextDraft }),
+        });
+        setSnapshot(updated);
+      } else {
+        const response = await apiFetch('/api/admin/projects/revert-change', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: change.action,
+            projectId: change.projectId,
+            field: change.field,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || 'The selected project change could not be removed from the draft.');
+        }
+      }
+
+      if (change.scope === 'project' && !await load()) {
+        throw new Error('The change was reverted, but draft status could not be reloaded. Refresh to verify before publishing.');
+      }
+      onSuccess(`Removed this change from the saved draft: ${change.label}`);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'The selected change could not be removed from the draft.');
+    } finally {
+      setRevertingChangeId(null);
+    }
+  };
 
   const runAction = async (path: string, successMessage: string) => {
     setBusy(true);
@@ -509,8 +611,8 @@ export const PublishingManagement: React.FC<PublishingManagementProps> = ({ apiF
       )}
       {showDraftChanges && <div className="fixed inset-0 z-[5000] flex items-center justify-center bg-slate-950/50 p-3 backdrop-blur-sm sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowDraftChanges(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="draft-change-title" className="admin-content-card max-h-[min(80dvh,680px)] w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-          <header className="flex items-start justify-between gap-4 border-b border-slate-100 p-4 sm:p-5"><div><h2 id="draft-change-title" className="text-base font-semibold text-slate-900">Saved draft changes</h2><p className="mt-1 text-xs text-slate-500">These saved fields differ from the live portfolio.</p></div><button type="button" onClick={() => setShowDraftChanges(false)} aria-label="Close draft changes" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"><X size={15} /></button></header>
-          <div className="max-h-[calc(min(80dvh,680px)-80px)] overflow-y-auto p-4 sm:p-5">{draftChanges.length ? <ul className="space-y-2">{draftChanges.map((change, index) => <li key={`${index}-${change}`} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-xs text-slate-700"><span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={11} /></span>{change}</li>)}</ul> : <p className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-xs text-slate-500">No saved content changes differ from the live portfolio.</p>}</div>
+          <header className="flex items-start justify-between gap-4 border-b border-slate-100 p-4 sm:p-5"><div><h2 id="draft-change-title" className="text-base font-semibold text-slate-900">Saved draft changes</h2><p className="mt-1 text-xs text-slate-500">Remove any item to restore only that field or item to the live version.</p></div><button type="button" onClick={() => setShowDraftChanges(false)} aria-label="Close draft changes" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"><X size={15} /></button></header>
+          <div className="max-h-[calc(min(80dvh,680px)-80px)] overflow-y-auto p-4 sm:p-5">{draftChanges.length ? <ul className="space-y-2">{draftChanges.map((change) => <li key={change.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-xs text-slate-700"><span className="flex min-w-0 items-start gap-2"><span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={11} /></span><span className="min-w-0 break-words">{change.label}</span></span><button type="button" onClick={() => void revertDraftChange(change)} disabled={busy || Boolean(revertingChangeId)} title="Remove only this change from the saved draft" aria-label={`Remove change: ${change.label}`} className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-semibold text-slate-600 hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50">{revertingChangeId === change.id ? <RefreshCw size={12} className="animate-spin" /> : <RotateCcw size={12} />}<span className="hidden sm:inline">Remove</span></button></li>)}</ul> : <p className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-xs text-slate-500">No saved content changes differ from the live portfolio.</p>}</div>
         </section>
       </div>}
     </div>

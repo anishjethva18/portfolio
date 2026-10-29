@@ -28,38 +28,79 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [useNativeViewer, setUseNativeViewer] = useState(false);
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
+  const hasRenderedDocumentRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: ReturnType<typeof pdfjs.getDocument> | undefined;
+    setPdfDocument(null);
+    setError('');
+    setLoading(Boolean(url));
+    setUseNativeViewer(false);
+    hasRenderedDocumentRef.current = false;
+    if (!url) {
+      setLoading(false);
+      return;
+    }
+
+    const loadDocument = async () => {
+      try {
+        const bytes = await getCachedResumeBytes(url);
+        if (cancelled) return;
+        loadingTask = pdfjs.getDocument({ data: bytes.slice() });
+        const document = await loadingTask.promise;
+        if (!cancelled) setPdfDocument(document);
+      } catch (loadError) {
+        if (cancelled) return;
+        console.error('Could not load PDF document.', loadError);
+        let nativePdfAvailable = false;
+        try {
+          const response = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+          nativePdfAvailable = response.ok &&
+            response.headers.get('content-type')?.toLowerCase().includes('application/pdf') === true;
+        } catch (probeError) {
+          console.warn('Could not verify the PDF response for the native viewer.', probeError);
+        }
+        if (cancelled) return;
+        setError('PDF preview could not be loaded.');
+        setUseNativeViewer(nativePdfAvailable);
+        setLoading(false);
+      }
+    };
+
+    void loadDocument();
+
+    return () => {
+      cancelled = true;
+      void loadingTask?.destroy();
+    };
+  }, [url]);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !url) return;
+    if (!container || !pdfDocument) return;
 
     let cancelled = false;
-    const renderTasks: Array<{ cancel: () => void }> = [];
-    let loadingTask: ReturnType<typeof pdfjs.getDocument> | undefined;
     let resizeObserver: ResizeObserver | undefined;
-    let pdfDocument: PDFDocumentProxy | undefined;
     let renderedWidth = 0;
     let renderGeneration = 0;
-    setUseNativeViewer(false);
+    const renderTasks: Array<{ cancel: () => void }> = [];
 
     const renderDocument = async () => {
       const generation = ++renderGeneration;
       if (!container.clientWidth) return;
-      setLoading(true);
+      if (!hasRenderedDocumentRef.current) setLoading(true);
       setError('');
       renderTasks.forEach((task) => task.cancel());
       renderTasks.length = 0;
-      container.replaceChildren();
 
       try {
-        loadingTask ||= pdfjs.getDocument({ data: (await getCachedResumeBytes(url)).slice() });
-        pdfDocument ||= await loadingTask.promise;
-        if (cancelled || generation !== renderGeneration) return;
-
         const pageCount = firstPageOnly ? Math.min(pdfDocument.numPages, 1) : pdfDocument.numPages;
         const availableWidth = Math.max(1, container.clientWidth);
         const availableHeight = Math.max(1, container.clientHeight - 24);
         const deviceScale = Math.min(window.devicePixelRatio || 1, 2);
+        const renderedPages = window.document.createDocumentFragment();
 
         for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
           if (cancelled || generation !== renderGeneration) return;
@@ -85,7 +126,6 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
           canvas.style.margin = '0 auto 12px';
           canvas.style.backgroundColor = '#fff';
           canvas.setAttribute('aria-label', `PDF page ${pageNumber} of ${pdfDocument.numPages}`);
-          container.appendChild(canvas);
 
           const task = page.render({
             canvasContext: context,
@@ -95,11 +135,16 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
           renderTasks.push(task);
           await task.promise;
           if (cancelled || generation !== renderGeneration) return;
+          renderedPages.appendChild(canvas);
         }
-        if (!cancelled && generation === renderGeneration) setLoading(false);
-      } catch (error) {
-        if (!cancelled && generation === renderGeneration && !(error instanceof Error && error.name === 'RenderingCancelledException')) {
-          console.error('Could not render PDF document.', error);
+        if (!cancelled && generation === renderGeneration) {
+          container.replaceChildren(renderedPages);
+          hasRenderedDocumentRef.current = true;
+          setLoading(false);
+        }
+      } catch (renderError) {
+        if (!cancelled && generation === renderGeneration && !(renderError instanceof Error && renderError.name === 'RenderingCancelledException')) {
+          console.error('Could not render PDF document.', renderError);
           let nativePdfAvailable = false;
           try {
             const response = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
@@ -128,10 +173,9 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
       cancelled = true;
       resizeObserver?.disconnect();
       renderTasks.forEach((task) => task.cancel());
-      void loadingTask?.destroy();
-      container.replaceChildren();
+      renderGeneration += 1;
     };
-  }, [url, fitWidth, zoom, firstPageOnly]);
+  }, [url, pdfDocument, fitWidth, zoom, firstPageOnly]);
 
   let isExternal = false;
   try {

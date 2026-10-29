@@ -6,6 +6,7 @@ import { PdfDocumentViewer } from '../PdfDocumentViewer';
 import { useResponsivePageSize } from '../../../hooks/useResponsivePageSize';
 import { formatAdminDateTime } from '../../../utils/dateTime';
 import { buildPortfolioMediaUrl, getPortfolioMediaId } from '../../../utils/portfolioMedia';
+import { getContentState } from '../../../utils/adminDraftStatus';
 
 interface MediaManagementProps {
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
@@ -156,7 +157,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
   }, [preview]);
 
   useEffect(() => {
-    onDraftChange?.(JSON.stringify(resumes) !== JSON.stringify(savedResumes));
+    onDraftChange?.(getContentState(resumes) !== getContentState(savedResumes));
   }, [resumes, savedResumes, onDraftChange]);
 
   useEffect(() => {
@@ -236,7 +237,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       if (throwOnError) throw new Error('Resume changes are already being saved. Wait for that save to finish and try again.');
       return;
     }
-    if (JSON.stringify(resumes) === JSON.stringify(savedResumes)) return;
+    if (getContentState(resumes) === getContentState(savedResumes)) return;
     setResumeSaving(true);
     setError('');
     setResumeMessage('');
@@ -271,7 +272,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       const persisted = Array.isArray(saved.draft?.resumes) ? saved.draft.resumes : cleanResumes;
       setResumes(persisted);
       setSavedResumes(persisted);
-      setResumeMessage('Resume changes saved to draft. Publish separately to update the public CV app.');
+      if (!throwOnError) setResumeMessage('Resume changes saved to draft. Publish separately to update the public CV app.');
       await loadResumes();
       await onSaved?.();
     } catch (cause) {
@@ -543,8 +544,8 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
         </div> : <div className="min-h-14" aria-hidden="true" />}
         <AdminPagination page={currentResumePage} pageSize={resumePageSize} totalItems={resumes.length} onPageChange={setResumePage} showItemProgress />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {JSON.stringify(resumes) !== JSON.stringify(savedResumes) && <p className="text-[10px] text-slate-500">Unsaved resume changes</p>}
-          <button type="button" onClick={() => void saveResumes()} disabled={resumeLoading || resumeSaving || JSON.stringify(resumes) === JSON.stringify(savedResumes)} className="admin-action-button inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">{resumeSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{resumeSaving ? 'Saving draft…' : 'Save resume draft'}</button>
+          {getContentState(resumes) !== getContentState(savedResumes) && <p className="text-[10px] text-slate-500">Unsaved resume changes</p>}
+          <button type="button" onClick={() => void saveResumes()} disabled={resumeLoading || resumeSaving || getContentState(resumes) === getContentState(savedResumes)} className="admin-action-button inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">{resumeSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{resumeSaving ? 'Saving draft…' : 'Save resume draft'}</button>
         </div>
       </section>
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div>}
