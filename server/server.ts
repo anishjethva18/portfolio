@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import fs from 'fs';
 import { createServer as createHttpServer } from 'http';
+import type { Socket } from 'net';
 import express from 'express';
 import type { ErrorRequestHandler } from 'express';
 import path from 'path';
@@ -24,7 +25,7 @@ import { AuthenticatedRequest, optionalAuth, requireAdmin, validateCsrf } from '
 import { projectDraftService } from './services/projectDraftService';
 import { apiNotFoundHandler } from './middleware/apiNotFound';
 import { getAuthConfig } from './config/authConfig';
-import { connectMongo, ensureApplicationCollections } from './config/dbConfig';
+import { connectMongo, disconnectMongo, ensureApplicationCollections } from './config/dbConfig';
 import { db } from './db/database';
 import { windowsStorageService } from './services/windowsStorageService';
 import { AdminContentDraftModel, FileMetadataModel, ProjectModel } from './models';
@@ -169,6 +170,16 @@ async function startServer() {
       crossOriginEmbedderPolicy: false,
     })
   );
+
+  if (process.env.PORTFOLIO_DEV_API_ONLY === 'true') {
+    const vitePort = /^\d+$/.test(process.env.PORTFOLIO_VITE_PORT || '')
+      ? process.env.PORTFOLIO_VITE_PORT
+      : '5173';
+    app.get('/', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(302, `http://localhost:${vitePort}/`);
+    });
+  }
 
   // Trust only an explicitly configured number of reverse proxies; default trusts none.
   const configuredProxyHops = parseTrustedProxyHops(process.env.TRUST_PROXY_HOPS);
@@ -527,6 +538,86 @@ async function startServer() {
 
   // Share the HTTP server with Vite so HMR does not claim a separate fixed port.
   const server = createHttpServer(app);
+  const sockets = new Set<Socket>();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+  let archiveRetentionInterval: NodeJS.Timeout | undefined;
+  let isShuttingDown = false;
+  let shutdownPromise: Promise<void> | undefined;
+
+  const shutdown = (reason: string, exitCode = 0): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    isShuttingDown = true;
+    console.log(`[Server] Shutting down after ${reason}.`);
+
+    shutdownPromise = (async () => {
+      if (archiveRetentionInterval) clearInterval(archiveRetentionInterval);
+
+      try {
+        if (server.listening) {
+          console.log(`[Server] Closing HTTP listener and ${sockets.size} active connection(s).`);
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => {
+              if (error) {
+                reject(error);
+                return;
+              }
+              console.log('[Server] HTTP close callback completed.');
+              resolve();
+            });
+            server.closeAllConnections();
+            for (const socket of sockets) socket.destroy();
+            console.log('[Server] Requested closure of the HTTP listener and active connections.');
+          });
+        }
+      } catch (error) {
+        console.error('[Server] Failed to close HTTP server cleanly:', error);
+        exitCode = 1;
+      }
+
+      console.log('[Server] HTTP server and active connections closed.');
+      console.log('[Server] Disconnecting from MongoDB...');
+      try {
+        await disconnectMongo(5_000);
+      } catch (error) {
+        console.error('[Server] Failed to disconnect MongoDB cleanly:', error);
+        exitCode = 1;
+      }
+
+      process.exitCode = exitCode;
+      if (process.connected) {
+        console.log('[Server] Closed the dev launcher IPC channel.');
+        process.disconnect();
+      }
+    })();
+
+    return shutdownPromise;
+  };
+
+  const requestShutdown = (reason: string) => {
+    if (isShuttingDown) {
+      console.warn(`[Server] Repeated ${reason} received during shutdown; closing remaining HTTP connections.`);
+      server.closeAllConnections();
+      for (const socket of sockets) socket.destroy();
+      return;
+    }
+
+    void shutdown(reason);
+  };
+
+  process.on('SIGINT', () => {
+    requestShutdown('SIGINT');
+  });
+  process.on('SIGTERM', () => {
+    requestShutdown('SIGTERM');
+  });
+  process.on('message', (message: unknown) => {
+    if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'shutdown') {
+      requestShutdown('dev launcher');
+    }
+  });
 
   // Serve only intentionally public static assets; private captures use authenticated download routes.
   app.use(express.static(path.join(process.cwd(), 'client/public')));
@@ -615,7 +706,7 @@ async function startServer() {
     console.log(`[Windows 11 OS Portfolio] Listening on http://0.0.0.0:${PORT}`);
     
     // Retire expired visitor copies daily while preserving admin archive originals.
-    setInterval(() => {
+    archiveRetentionInterval = setInterval(() => {
         void windowsStorageService.run30DayRetentionCleanup()
           .then((result) => console.log(`[Worker] Cleanup complete. Retired ${result.cleanedCount} expired visitor copies; admin archives were preserved.`))
           .catch((err) => {
@@ -624,13 +715,13 @@ async function startServer() {
     }, 24 * 60 * 60 * 1000);
   });
 
-  server.on('error', (err: any) => {
+  server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[Startup Fatal Error]: Port ${PORT} is already in use by another process.`);
     } else {
       console.error(`[Startup Fatal Error]: Server failed to bind on port ${PORT}:`, err);
     }
-    process.exit(1);
+    void shutdown('server error', 1);
   });
 }
 

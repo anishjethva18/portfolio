@@ -167,7 +167,8 @@ Run the client development command from the repository root:
 npm --prefix client run dev
 ```
 
-This starts the API first, waits for its health endpoint, then starts the standalone Vite development server. Open the portfolio at [http://localhost:5173](http://localhost:5173), then open **Admin Control Center** from the desktop to sign in. The Vite server proxies `/api` requests to the API on port `3000`; wait for the API-ready message before Vite starts. Keep using the `5173` URL while this command is running.
+This starts the API first, waits for its health endpoint, then starts the standalone Vite development server. Open the portfolio at [http://localhost:5173](http://localhost:5173) by default (or the selected `--port`), then open **Admin Control Center** from the desktop to sign in. The Vite server proxies `/api` requests to the API on `PORT` (default `3000`); wait for the API-ready message before Vite starts. Keep using the Vite URL while this command is running.
+When started by this command, opening the API root at `http://localhost:3000` redirects to the Vite frontend (including a custom `--port` value).
 
 | Local endpoint              | URL                                                                  |
 | --------------------------- | -------------------------------------------------------------------- |
@@ -196,7 +197,7 @@ The Admin Control Center is an app inside the desktop. It is not a public admin-
 - **Messages and Users & Roles:** review inquiries and administer authorized accounts.
 - **Security & Status, Camera Archive, and Backup & Restore:** review health and audit activity, manage captures, and create or restore supported backups.
 
-Admin sessions use server-side MongoDB storage and HttpOnly cookies; mutation requests also use CSRF protection. Admin APIs are protected by server-side role checks. Local memory database mode is intended only for explicitly enabled development or tests and does not provide persistent admin accounts or sessions.
+Admin sessions use server-side MongoDB storage and HttpOnly cookies; mutation requests also use CSRF protection. Admin APIs are protected by server-side role checks. Development requires an available configured MongoDB instance unless `ALLOW_IN_MEMORY_DB=true` is explicitly set for an isolated local fallback. Tests use their own isolated database; neither fallback is suitable for production.
 
 ## 🤖 Optional integrations
 

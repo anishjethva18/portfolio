@@ -287,18 +287,44 @@ export async function connectMongo(): Promise<DatabaseConnectionInfo> {
 /**
  * Disconnects from MongoDB and stops memory server if active
  */
-export async function disconnectMongo(): Promise<void> {
+async function waitForMongoCleanup<T>(operation: Promise<T>, description: string, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
   try {
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.disconnect();
-    }
-    if (mongoMemoryServer) {
-      await mongoMemoryServer.stop();
-      mongoMemoryServer = null;
-    }
-    isConnected = false;
-    console.log('[MongoDB] Safely disconnected from database.');
-  } catch (err: any) {
-    console.error('[MongoDB] Error during disconnect:', err);
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${description} timed out after ${timeoutMs}ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
+}
+
+export async function disconnectMongo(timeoutMs = 5_000): Promise<void> {
+  let cleanupError: Error | undefined;
+
+  if (mongoose.connection.readyState !== 0) {
+    try {
+      await waitForMongoCleanup(mongoose.disconnect(), 'MongoDB driver disconnect', timeoutMs);
+    } catch (error) {
+      cleanupError = error instanceof Error ? error : new Error(String(error));
+      console.error('[MongoDB] Error during driver disconnect:', cleanupError);
+    }
+  }
+
+  if (mongoMemoryServer) {
+    try {
+      await waitForMongoCleanup(mongoMemoryServer.stop(), 'In-memory MongoDB shutdown', timeoutMs);
+      mongoMemoryServer = null;
+    } catch (error) {
+      cleanupError ??= error instanceof Error ? error : new Error(String(error));
+      console.error('[MongoDB] Error stopping the in-memory server:', error);
+    }
+  }
+
+  isConnected = false;
+  if (cleanupError) throw cleanupError;
+
+  console.log('[MongoDB] Safely disconnected from database.');
 }

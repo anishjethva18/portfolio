@@ -114,3 +114,76 @@ test('weather widget serves clearly marked cached data when Open-Meteo is unavai
   assert.equal(retryPayload.stale, true);
   assert.equal(upstreamRequests, 2);
 });
+
+test('weather widget falls back to wttr.in when Open-Meteo cannot be resolved', async (t) => {
+  await connectMongo();
+  await db.initMongoSync();
+  t.after(() => disconnectMongo());
+
+  const originalFetch = globalThis.fetch;
+  let fallbackRequests = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('http://127.0.0.1:')) return originalFetch(input, init);
+    if (url.includes('api.open-meteo.com')) throw new TypeError('fetch failed');
+    if (url.startsWith('https://wttr.in/23.456,-78.901?format=j1')) {
+      fallbackRequests++;
+      return Response.json({
+        current_condition: [{
+          temp_C: '22',
+          weatherCode: '116',
+          windspeedKmph: '10',
+          humidity: '60',
+          FeelsLikeC: '21',
+          uvIndex: '3',
+        }],
+        weather: [{
+          date: '2026-10-31',
+          maxtempC: '28',
+          mintempC: '19',
+          hourly: [{ time: '1200', weatherCode: '119' }],
+        }],
+      });
+    }
+    throw new Error(`Unexpected upstream URL: ${url}`);
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const app = express();
+  app.use('/api/widgets', widgetsRouter);
+  const server = app.listen(0);
+  t.after(() => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const { port } = server.address() as AddressInfo;
+
+  const response = await originalFetch(
+    `http://127.0.0.1:${port}/api/widgets/weather?latitude=23.456&longitude=-78.901`,
+  );
+  const payload = await response.json() as {
+    success?: boolean;
+    stale?: boolean;
+    data?: {
+      current_weather?: { temperature?: number; weathercode?: number; windspeed?: number; time?: string };
+      hourly?: { relative_humidity_2m?: number[]; apparent_temperature?: number[]; uv_index?: number[] };
+      daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[]; weathercode?: number[] };
+    };
+  };
+  assert.equal(response.status, 200);
+  assert.equal(payload.success, true);
+  assert.equal(payload.stale, false);
+  assert.equal(payload.data?.current_weather?.temperature, 22);
+  assert.equal(payload.data?.current_weather?.weathercode, 2);
+  assert.equal(payload.data?.current_weather?.windspeed, 10);
+  assert.equal(typeof payload.data?.current_weather?.time, 'string');
+  assert.deepEqual(payload.data?.hourly?.relative_humidity_2m, [60]);
+  assert.deepEqual(payload.data?.hourly?.apparent_temperature, [21]);
+  assert.deepEqual(payload.data?.hourly?.uv_index, [3]);
+  assert.deepEqual(payload.data?.daily?.temperature_2m_max, [28]);
+  assert.deepEqual(payload.data?.daily?.temperature_2m_min, [19]);
+  assert.deepEqual(payload.data?.daily?.weathercode, [3]);
+  assert.equal(fallbackRequests, 1);
+});
