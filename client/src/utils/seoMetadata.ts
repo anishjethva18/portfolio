@@ -37,6 +37,9 @@ export interface SeoMetadata {
 const FALLBACK_TITLE = 'Developer Portfolio';
 const FALLBACK_DESCRIPTION = 'Interactive developer portfolio.';
 const FALLBACK_IMAGE = '/avatar.png';
+const FALLBACK_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
+const loadedFavicons = new Set<string>();
+const faviconRequestIds = new WeakMap<HTMLLinkElement, number>();
 
 function safeText(value: unknown, fallback: string, maxLength: number): string {
   if (typeof value !== 'string') return fallback;
@@ -148,6 +151,72 @@ function upsertMeta(
   element.content = content;
 }
 
+function applyFavicon(url: string, targetDocument: Document): void {
+  const icon = removeDuplicateElements(
+    targetDocument.head,
+    'link[rel="icon"]',
+    () => {
+      const link = targetDocument.createElement('link');
+      link.rel = 'icon';
+      return link;
+    },
+  );
+  if (!icon.hasAttribute('href')) {
+    icon.href = FALLBACK_FAVICON;
+    icon.type = 'image/svg+xml';
+  }
+  const requestId = (faviconRequestIds.get(icon) || 0) + 1;
+  faviconRequestIds.set(icon, requestId);
+
+  if (!url) {
+    icon.href = FALLBACK_FAVICON;
+    icon.type = 'image/svg+xml';
+    return;
+  }
+
+  const faviconUrl = new URL(url, targetDocument.baseURI).href;
+  if (loadedFavicons.has(faviconUrl)) {
+    icon.href = faviconUrl;
+    return;
+  }
+
+  const ImageConstructor = targetDocument.defaultView?.Image;
+  if (!ImageConstructor) {
+    icon.href = faviconUrl;
+    return;
+  }
+
+  const image = new ImageConstructor();
+  image.onload = () => {
+    if (faviconRequestIds.get(icon) !== requestId) return;
+    loadedFavicons.add(faviconUrl);
+    icon.href = faviconUrl;
+    const extension = new URL(faviconUrl).pathname.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ico: 'image/x-icon',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      svg: 'image/svg+xml',
+    };
+    const mimeType = extension ? mimeTypes[extension] : undefined;
+    if (mimeType) icon.type = mimeType;
+    else icon.removeAttribute('type');
+  };
+  image.onerror = () => {
+    console.warn('[SEO] Configured favicon could not be loaded; keeping the immediate fallback.');
+  };
+  image.src = faviconUrl;
+}
+
+export function applyConfiguredFavicon(targetDocument = document): void {
+  const icon = targetDocument.head.querySelector<HTMLLinkElement>('link[rel="icon"][data-configured-favicon]');
+  const faviconUrl = icon?.dataset.configuredFavicon?.trim();
+  if (faviconUrl) applyFavicon(faviconUrl, targetDocument);
+}
+
 export function applySeoMetadata(content: SeoContent, baseUrl: string, targetDocument = document): SeoMetadata {
   const metadata = buildSeoMetadata(content, baseUrl);
   targetDocument.title = metadata.title;
@@ -175,16 +244,11 @@ export function applySeoMetadata(content: SeoContent, baseUrl: string, targetDoc
   );
   canonical.href = metadata.canonicalUrl;
 
-  const icon = removeDuplicateElements(
-    targetDocument.head,
-    'link[rel="icon"]',
-    () => {
-      const link = targetDocument.createElement('link');
-      link.rel = 'icon';
-      return link;
-    },
+  applyFavicon(metadata.faviconUrl, targetDocument);
+  targetDocument.head.querySelector<HTMLLinkElement>('link[rel="icon"]')?.setAttribute(
+    'data-configured-favicon',
+    metadata.faviconUrl,
   );
-  icon.href = metadata.faviconUrl;
 
   const structuredData = removeDuplicateElements(
     targetDocument.head,
@@ -266,7 +330,14 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
   output = replaceHeadTag(
     output,
     /<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*>/gi,
-    `<link rel="icon" href="${escapeAttribute(metadata.faviconUrl)}" data-seo="icon" />`,
+    `<link rel="icon" href="${FALLBACK_FAVICON}" type="image/svg+xml" data-seo="icon" data-configured-favicon="${escapeAttribute(metadata.faviconUrl)}" />`,
+  );
+  output = replaceHeadTag(
+    output,
+    /<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/gi,
+    metadata.faviconUrl
+      ? `<link rel="preload" as="image" href="${escapeAttribute(metadata.faviconUrl)}" data-seo-favicon-preload="true" />`
+      : '',
   );
 
   const jsonLd = {

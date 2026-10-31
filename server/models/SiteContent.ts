@@ -108,6 +108,7 @@ export interface ISiteContent extends Document {
     portfolioVersion?: string;
     socialImageUrl?: string;
     faviconUrl?: string;
+    emailBrandImageUrl?: string;
     emailFaviconEnabled?: boolean;
     maintenanceMode: boolean;
     maintenanceMessage?: string;
@@ -273,6 +274,7 @@ const SiteContentSchema = new Schema<ISiteContent>(
       portfolioVersion: { type: String, default: '1.0.0', trim: true, maxlength: 32 },
       socialImageUrl: { type: String, default: '' },
       faviconUrl: { type: String, default: '' },
+      emailBrandImageUrl: { type: String, default: '' },
       emailFaviconEnabled: { type: Boolean, default: true },
       maintenanceMode: { type: Boolean, default: false },
       maintenanceMessage: { type: String, default: 'System is currently undergoing scheduled maintenance. Please check back shortly.' },

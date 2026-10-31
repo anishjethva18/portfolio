@@ -7,6 +7,7 @@ import { getMediaPreviewUrl, VideoFrameThumbnail } from '../common/MediaThumbnai
 import { captureStorageService, LocalCaptureRecord } from '../../services/captureStorageService';
 import { useTouchSensitivity } from '../../hooks/useTouchSensitivity';
 import { isPortfolioMediaUrl } from '../../utils/portfolioMedia';
+import { cachePublishedContent, getCachedPublishedContent } from '../../utils/publishedPortfolioCache';
 import { motion } from 'motion/react';
 import {
   buildVirtualDDriveFiles,
@@ -246,7 +247,9 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
       localCaptureUrlsRef.current.clear();
     };
   }, []);
-  const [publishedDriveContent, setPublishedDriveContent] = useState<PublishedDriveContent | null>(null);
+  const [publishedDriveContent, setPublishedDriveContent] = useState<PublishedDriveContent | null>(
+    () => getCachedPublishedContent() as PublishedDriveContent | null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -261,7 +264,10 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
         if (!response.ok || payload?.success !== true || !payload.content) {
           throw new Error(payload?.error || `Published media could not be loaded (HTTP ${response.status}).`);
         }
-        if (active) setPublishedDriveContent(payload.content);
+        if (active) {
+          cachePublishedContent(payload.content);
+          setPublishedDriveContent(payload.content);
+        }
       } catch (error) {
         if (!active || controller.signal.aborted) return;
         console.error('[Media] Could not load published media references.', error);
@@ -270,6 +276,7 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
     const handlePublishedContent = (event: Event) => {
       const content = (event as CustomEvent<PublishedDriveContent>).detail;
       if (content && typeof content === 'object') {
+        cachePublishedContent(content);
         setPublishedDriveContent(content);
       } else {
         void refreshPublishedContent();

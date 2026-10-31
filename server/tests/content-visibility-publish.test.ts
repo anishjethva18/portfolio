@@ -11,7 +11,7 @@ async function run() {
       { siteSettings: { emailFaviconEnabled: true } },
       { siteSettings: { emailFaviconEnabled: false } },
     ),
-    ['Site & Appearance · Email favicon in emails: Enabled → Disabled'],
+    ['Site & Appearance · Email branding image in emails: Enabled → Disabled'],
     'Boolean settings history states the prior and new values explicitly',
   );
   assert.deepEqual(
@@ -75,6 +75,7 @@ async function run() {
         openGraphDescription: 'Published Open Graph description.',
         canonicalUrl: 'https://portfolio.example.test/',
         faviconUrl: '/api/portfolio-media/favicon.png?id=file-seo-test',
+        emailBrandImageUrl: 'https://images.example.test/email-brand.png',
         socialImageUrl: 'https://portfolio.example.test/social.png',
         twitterCard: 'summary_large_image',
         twitterTitle: 'Published Twitter title',
@@ -120,6 +121,7 @@ async function run() {
         assert.equal(savedContent.siteSettings.openGraphDescription, 'Published Open Graph description.');
         assert.equal(savedContent.siteSettings.canonicalUrl, 'https://portfolio.example.test/');
         assert.equal(savedContent.siteSettings.faviconUrl, '/api/portfolio-media/favicon.png?id=file-seo-test');
+        assert.equal(savedContent.siteSettings.emailBrandImageUrl, 'https://images.example.test/email-brand.png');
         assert.equal(savedContent.siteSettings.socialImageUrl, 'https://portfolio.example.test/social.png');
         assert.equal(savedContent.siteSettings.twitterCard, 'summary_large_image');
         assert.equal(savedContent.siteSettings.twitterTitle, 'Published Twitter title');
@@ -149,6 +151,14 @@ async function run() {
     await assert.rejects(
       contentStudioService.saveDraft(invalidMetadata, 'visibility-test'),
       /Favicon URL must use http\(s\) or a public local portfolio path/,
+    );
+    const invalidEmailBrandImage = {
+      ...content,
+      siteSettings: { ...content.siteSettings, emailBrandImageUrl: 'http://images.example.test/email-brand.png' },
+    };
+    await assert.rejects(
+      contentStudioService.saveDraft(invalidEmailBrandImage, 'visibility-test'),
+      /Email branding image URL must use HTTPS or a public local portfolio path/,
     );
     console.log('Content visibility and SEO settings persist through save, publish, and reload.');
   } finally {

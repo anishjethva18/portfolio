@@ -45,11 +45,29 @@ function loadCachedProjects(): ProjectData[] {
   return PROJECTS_DATA;
 }
 
+function hasCachedProjects(): boolean {
+  try {
+    const raw = localStorage.getItem(PROJECT_CACHE_KEY);
+    if (!raw) return false;
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) && value.every((project) =>
+      project &&
+      typeof project === 'object' &&
+      typeof project.id === 'string' &&
+      typeof project.title === 'string' &&
+      Array.isArray(project.technologies) &&
+      Array.isArray(project.features)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const ProjectsApp: React.FC = () => {
   const { openApp, addNotification } = useOS();
   const { apiFetch, isAdmin } = useAuth();
   const [projects, setProjects] = useState<ProjectData[]>(loadCachedProjects);
-  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [loadingProjects, setLoadingProjects] = useState(() => !hasCachedProjects());
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [projectLoadAttempt, setProjectLoadAttempt] = useState(0);
 

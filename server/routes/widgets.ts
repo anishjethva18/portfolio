@@ -17,6 +17,9 @@ interface StockQuoteResponse {
 
 const STOCK_SYMBOLS = ['NVDA', 'GOOGL', 'MSFT'] as const;
 const CACHE_TTL_MS = 60_000;
+const WEATHER_CACHE_TTL_MS = 60_000;
+const WEATHER_STALE_TTL_MS = 2 * 60 * 60_000;
+const WEATHER_RETRY_DELAY_MS = 60_000;
 const quoteLimiter = createRateLimiter({
   maxRequests: 30,
   windowMs: 60_000,
@@ -38,6 +41,18 @@ export const widgetsRouter = Router();
 let cachedQuotes: StockQuoteResponse | null = null;
 let cacheExpiresAt = 0;
 const upstreamCache = new Map<string, { value: unknown; expiresAt: number }>();
+const weatherCache = new Map<string, {
+  value: unknown;
+  fetchedAt: number;
+  expiresAt: number;
+  staleUntil: number;
+  retryAfter: number;
+}>();
+const weatherRequests = new Map<string, Promise<{
+  value: unknown;
+  stale: boolean;
+  fetchedAt: number;
+}>>();
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -63,6 +78,65 @@ async function fetchUpstreamJson(url: string, cacheKey: string, ttlMs = 60_000):
   const value: unknown = await response.json();
   upstreamCache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
   return value;
+}
+
+async function fetchWeatherData(url: string, cacheKey: string): Promise<{
+  value: unknown;
+  stale: boolean;
+  fetchedAt: number;
+}> {
+  const now = Date.now();
+  const cached = weatherCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) {
+    return { value: cached.value, stale: false, fetchedAt: cached.fetchedAt };
+  }
+  if (cached && now < cached.staleUntil && now < cached.retryAfter) {
+    return { value: cached.value, stale: true, fetchedAt: cached.fetchedAt };
+  }
+
+  const pending = weatherRequests.get(cacheKey);
+  if (pending) return pending;
+
+  for (const [key, entry] of weatherCache) {
+    if (entry.staleUntil <= now) weatherCache.delete(key);
+  }
+  if (weatherCache.size >= 150) {
+    const oldestKey = weatherCache.keys().next().value;
+    if (oldestKey) weatherCache.delete(oldestKey);
+  }
+
+  const request = (async () => {
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'WindowsPortfolioWidgets/1.0' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) throw new Error(`Upstream request failed (HTTP ${response.status}).`);
+      const value: unknown = await response.json();
+      const fetchedAt = Date.now();
+      weatherCache.set(cacheKey, {
+        value,
+        fetchedAt,
+        expiresAt: fetchedAt + WEATHER_CACHE_TTL_MS,
+        staleUntil: fetchedAt + WEATHER_STALE_TTL_MS,
+        retryAfter: 0,
+      });
+      return { value, stale: false, fetchedAt };
+    } catch (error) {
+      if (cached && Date.now() < cached.staleUntil) {
+        cached.retryAfter = Date.now() + WEATHER_RETRY_DELAY_MS;
+        console.warn('[Widgets] Weather provider unavailable; serving cached weather.', error);
+        return { value: cached.value, stale: true, fetchedAt: cached.fetchedAt };
+      }
+      throw error;
+    }
+  })();
+  weatherRequests.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    weatherRequests.delete(cacheKey);
+  }
 }
 
 async function fetchStockQuote(symbol: string): Promise<StockQuote> {
@@ -158,7 +232,13 @@ widgetsRouter.get('/weather', weatherLimiter, async (req, res: Response) => {
 
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&hourly=relative_humidity_2m,apparent_temperature,uv_index&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto`;
   try {
-    res.json({ success: true, data: await fetchUpstreamJson(url, `weather:${latitude.toFixed(3)}:${longitude.toFixed(3)}`) });
+    const weather = await fetchWeatherData(url, `weather:${latitude.toFixed(3)}:${longitude.toFixed(3)}`);
+    res.json({
+      success: true,
+      data: weather.value,
+      stale: weather.stale,
+      updatedAt: new Date(weather.fetchedAt).toISOString(),
+    });
   } catch (error) {
     console.error('[Widgets] Weather provider request failed.', error);
     res.status(502).json({ success: false, error: 'Live weather is temporarily unavailable.' });

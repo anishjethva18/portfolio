@@ -97,7 +97,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const [publishedContent, setPublishedContent] = useState<any>(null);
   const [savedDraftContent, setSavedDraftContent] = useState<any>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
-  const [uploadingMediaField, setUploadingMediaField] = useState<'avatar' | 'resumeUrl' | 'socialImageUrl' | 'faviconUrl' | null>(null);
+  const [uploadingMediaField, setUploadingMediaField] = useState<'avatar' | 'resumeUrl' | 'socialImageUrl' | 'faviconUrl' | 'emailBrandImageUrl' | null>(null);
   const [unavailableCertificationPreviews, setUnavailableCertificationPreviews] = useState<Record<string, boolean>>({});
   const [wallpaperLocalPreviewUrl, setWallpaperLocalPreviewUrl] = useState<string | null>(null);
   const [wallpaperPreviewError, setWallpaperPreviewError] = useState(false);
@@ -116,6 +116,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const [recordingAdminShortcut, setRecordingAdminShortcut] = useState(false);
   const saveDraftActionRef = useRef<() => Promise<void>>(async () => undefined);
   const savingDraftLocallyRef = useRef(false);
+  const contentLoadedRef = useRef(false);
 
   useEffect(() => {
     if (requestedSection) setActiveSection(requestedSection);
@@ -171,6 +172,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       portfolioVersion: '1.0.0',
       socialImageUrl: '',
       faviconUrl: '',
+      emailBrandImageUrl: '',
       emailFaviconEnabled: true,
       maintenanceMode: false,
       maintenanceMessage: 'System is currently undergoing scheduled maintenance. Please check back shortly.',
@@ -255,7 +257,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   };
 
   const fetchContent = async () => {
-    setLoading(true);
+    if (!contentLoadedRef.current) setLoading(true);
     setErrorMessage(null);
     try {
       const res = await apiFetch('/api/admin/content-studio', { cache: 'no-store' });
@@ -268,6 +270,9 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
         capabilities: Array.isArray(data.draft.capabilities) ? data.draft.capabilities : [],
         siteSettings: {
           ...draftSettings,
+          emailBrandImageUrl: typeof draftSettings.emailBrandImageUrl === 'string'
+            ? draftSettings.emailBrandImageUrl
+            : draftSettings.faviconUrl || '',
           desktopShortcuts: Array.isArray(draftSettings.desktopShortcuts)
             ? draftSettings.desktopShortcuts
             : desktopIcons.filter((icon) => icon.type === 'app'),
@@ -281,6 +286,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       setContent(clonePortfolioContent(normalizedDraft));
       setSavedDraftContent(clonePortfolioContent(normalizedDraft));
       setPublishedContent(data.published);
+      contentLoadedRef.current = true;
       updateHiddenAppIds(data.draft.siteSettings?.disabledApps || []);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load portfolio content.');
@@ -449,7 +455,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     }
   };
 
-  const handleUploadMedia = async (file: File, field: 'avatar' | 'resumeUrl' | 'socialImageUrl' | 'faviconUrl') => {
+  const handleUploadMedia = async (file: File, field: 'avatar' | 'resumeUrl' | 'socialImageUrl' | 'faviconUrl' | 'emailBrandImageUrl') => {
     setUploadingMedia(true);
     setUploadingMediaField(field);
     setErrorMessage(null);
@@ -464,7 +470,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     }
     try {
       const url = await uploadPortfolioMedia(file, field === 'resumeUrl' ? 'resume' : 'profile');
-      if (field === 'socialImageUrl' || field === 'faviconUrl') updateSiteSettings(field, url);
+      if (field === 'socialImageUrl' || field === 'faviconUrl' || field === 'emailBrandImageUrl') updateSiteSettings(field, url);
       else updateProfile(field, url);
       if (field === 'socialImageUrl') URL.revokeObjectURL(localPreview);
       window.dispatchEvent(new CustomEvent('portfolio-media-changed'));
@@ -1648,14 +1654,14 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
                   </label>
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                     <div>
-                      <p className="text-[11px] font-semibold text-slate-700">Use favicon in emails</p>
+                      <p className="text-[11px] font-semibold text-slate-700">Use branding image in emails</p>
                       <p className="mt-0.5 text-[10px] font-normal text-slate-500">Email branding changes after you publish.</p>
                     </div>
                     <button
                       type="button"
                       role="switch"
                       aria-checked={content.siteSettings?.emailFaviconEnabled !== false}
-                      aria-label="Use website favicon in emails"
+                      aria-label="Use email branding image in emails"
                       onClick={() => updateSiteSettings('emailFaviconEnabled', content.siteSettings?.emailFaviconEnabled === false)}
                       className={`admin-compact-switch relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border border-slate-500 p-0 shadow-inner transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${content.siteSettings?.emailFaviconEnabled !== false ? 'bg-sky-600' : 'bg-slate-500'}`}
                       style={{ backgroundColor: content.siteSettings?.emailFaviconEnabled !== false ? '#0284c7' : '#64748b' }}
@@ -1666,6 +1672,16 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
                       />
                     </button>
                   </div>
+                </div>
+                <div className="space-y-2 text-xs font-semibold text-slate-700">
+                  <label htmlFor="email-brand-image-url">Email branding image</label>
+                  <input id="email-brand-image-url" value={content.siteSettings?.emailBrandImageUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('emailBrandImageUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                  <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
+                    <ImageIcon className="h-4 w-4" />
+                    {uploadingMediaField === 'emailBrandImageUrl' ? 'Uploading image…' : 'Upload email image'}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'emailBrandImageUrl'); event.currentTarget.value = ''; }} className="sr-only" />
+                  </label>
+                  <p className="text-[10px] font-normal text-slate-500">Public HTTPS images are loaded by email clients; failed loads show the AJ text mark.</p>
                 </div>
               </div>
             </section>

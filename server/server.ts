@@ -91,6 +91,21 @@ function updateMetaTag(html: string, attribute: 'name' | 'property', key: string
 function updateLinkTag(html: string, rel: 'canonical' | 'icon', href: string): string {
   const matcher = new RegExp(`<link\\b(?=[^>]*\\brel=["']${rel}["'])[^>]*>`, 'i');
   const existingTag = html.match(matcher)?.[0];
+  if (rel === 'icon') {
+    const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
+    const iconTag = `<link rel="icon" href="${fallback}" type="image/svg+xml" data-configured-favicon="${escapeHtmlAttribute(href)}" />`;
+    let updated = existingTag
+      ? html.replace(existingTag, iconTag)
+      : html.replace('</head>', `    ${iconTag}\n  </head>`);
+    const preloadMatcher = /<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/i;
+    const preloadTag = href
+      ? `<link rel="preload" as="image" href="${escapeHtmlAttribute(href)}" data-seo-favicon-preload="true" />`
+      : '';
+    const existingPreload = updated.match(preloadMatcher)?.[0];
+    if (existingPreload) updated = updated.replace(existingPreload, preloadTag);
+    else if (preloadTag) updated = updated.replace('</head>', `    ${preloadTag}\n  </head>`);
+    return updated;
+  }
   if (!href) return existingTag ? html.replace(existingTag, '') : html;
   const tag = `<link rel="${rel}" href="${escapeHtmlAttribute(href)}" />`;
   return existingTag
@@ -308,6 +323,7 @@ async function startServer() {
         profile?.resumeUrl,
         siteSettings?.socialImageUrl,
         siteSettings?.faviconUrl,
+        siteSettings?.emailBrandImageUrl,
         siteSettings?.defaultWallpaperUrl,
       ], mediaUrl) || visibleResumeReferences || activeSkillIconReferences;
       const projects = await ProjectModel.find({
@@ -380,6 +396,11 @@ async function startServer() {
   app.get('/api/email/favicon', async (_req, res) => {
     try {
       const publishedContent = await getLivePortfolioContent();
+      if (publishedContent.siteSettings?.emailFaviconEnabled === false) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(404).send('Email branding image is disabled.');
+        return;
+      }
       const mimeTypes: Record<string, string> = {
         png: 'image/png',
         jpg: 'image/jpeg',
@@ -389,31 +410,23 @@ async function startServer() {
         ico: 'image/x-icon',
         bmp: 'image/bmp',
       };
-      const draft = await AdminContentDraftModel.findOne({ key: 'primary_portfolio_content' })
-        .select('content.siteSettings.faviconUrl')
-        .lean();
-      const draftContent = draft?.content as Record<string, unknown> | undefined;
-      const draftSettings = draftContent?.siteSettings;
-      const draftFavicon = draftSettings && typeof draftSettings === 'object'
-        ? (draftSettings as Record<string, unknown>).faviconUrl
-        : undefined;
-      const configuredFaviconUrls = [
+      const configuredEmailImageUrls = [
+        publishedContent.siteSettings?.emailBrandImageUrl,
         publishedContent.siteSettings?.faviconUrl,
-        draftFavicon,
       ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-      const referencedFaviconIds = configuredFaviconUrls
+      const referencedEmailImageIds = configuredEmailImageUrls
         .map((url) => getPortfolioMediaId(url.trim()))
         .filter((id): id is string => Boolean(id));
-      const requestedFaviconId = typeof _req.query.id === 'string' ? _req.query.id : '';
-      const faviconIds = requestedFaviconId && referencedFaviconIds.includes(requestedFaviconId)
-        ? [requestedFaviconId, ...referencedFaviconIds.filter((id) => id !== requestedFaviconId)]
-        : referencedFaviconIds;
+      const requestedImageId = typeof _req.query.id === 'string' ? _req.query.id : '';
+      const emailImageIds = requestedImageId && referencedEmailImageIds.includes(requestedImageId)
+        ? [requestedImageId, ...referencedEmailImageIds.filter((id) => id !== requestedImageId)]
+        : referencedEmailImageIds;
 
       let favicon:
         | { name: string; contentType: string; safePath: string; buffer?: never }
         | { name: string; contentType: string; buffer: Buffer; safePath?: never }
         | null = null;
-      for (const faviconId of new Set(faviconIds)) {
+      for (const faviconId of new Set(emailImageIds)) {
         const file = await FileMetadataModel.findOne({
           id: faviconId,
           path: { $regex: '^Portfolio/Media/' },
@@ -442,6 +455,7 @@ async function startServer() {
       res.setHeader('Content-Disposition', `inline; filename="${fileService.sanitizeFileName(favicon.name)}"`);
       res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      setPortfolioMediaResourcePolicy(res, true);
       if (favicon.buffer) {
         res.setHeader('Content-Length', favicon.buffer.length);
         res.send(favicon.buffer);

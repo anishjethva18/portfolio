@@ -115,6 +115,7 @@ async function getPortfolioMediaStorageCategories(): Promise<Map<string, FileSto
     addPortfolioMediaCategory(categories, content.profile?.resumeUrl, 'resume');
     addPortfolioMediaCategory(categories, content.siteSettings?.socialImageUrl, 'profile');
     addPortfolioMediaCategory(categories, content.siteSettings?.faviconUrl, 'profile');
+    addPortfolioMediaCategory(categories, content.siteSettings?.emailBrandImageUrl, 'profile');
     addPortfolioMediaCategory(categories, content.siteSettings?.defaultWallpaperUrl, 'profile');
     for (const resume of Array.isArray(content.resumes) ? content.resumes : []) {
       addPortfolioMediaCategory(categories, resume?.file, 'resume');
@@ -1771,6 +1772,7 @@ let cachedSiteContent: any = {
     siteTitle: 'Windows 11 OS Portfolio — Anish Jethva',
     metaDescription: 'Interactive Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps.',
     socialImageUrl: '',
+    emailBrandImageUrl: '',
     emailFaviconEnabled: true,
     maintenanceMode: false,
     maintenanceMessage: 'System is currently undergoing scheduled maintenance. Please check back shortly.',

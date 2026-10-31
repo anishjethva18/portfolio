@@ -5,7 +5,7 @@ import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getGoogleOAuthAccessToken, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
-import { SiteContentModel } from '../models';
+import { AdminContentDraftModel, SiteContentModel } from '../models';
 import { getEmailConfig } from '../config/emailConfig';
 
 const asTransporter = (transport: Partial<Transporter>): Transporter => transport as Transporter;
@@ -250,8 +250,25 @@ test('SMTP DNS and timeout failures give actionable delivery guidance', () => {
 
 test('email branding references a hosted favicon and keeps AJ when none is configured', () => {
   assert.match(getEmailBrandMark('https://portfolio.example/favicon.png'), /src="https:\/\/portfolio\.example\/favicon\.png"/);
+  assert.match(getEmailBrandMark('https://portfolio.example/favicon.png'), /alt="AJ"/);
   assert.match(getEmailBrandMark(''), />AJ<\/span>/);
   assert.match(getEmailBrandMark('https://portfolio.example/favicon.png'), /src="https:\/\/portfolio\.example\/favicon\.png"/);
+});
+
+test('generated email HTML uses external branding without delaying delivery and keeps readable AJ fallback text', () => {
+  const imageUrl = 'https://api.portfolio.example/api/email/favicon?id=file-brand-image';
+  const html = createPasswordResetEmailHtml(
+    'admin@example.test',
+    'https://portfolio.example/reset',
+    'https://portfolio.example',
+    imageUrl
+  );
+  assert.match(html, /<img src="https:\/\/api\.portfolio\.example\/api\/email\/favicon\?id=file-brand-image" alt="AJ"/);
+  assert.doesNotMatch(html, /\bonerror\s*=|<script\b/i);
+  assert.match(
+    createPasswordResetEmailHtml('admin@example.test', 'https://portfolio.example/reset', 'https://portfolio.example', ''),
+    />AJ<\/span>/
+  );
 });
 
 test('email favicon is enabled by default and can be disabled in published settings', () => {
@@ -315,6 +332,24 @@ test('email branding only builds API favicon URLs from a configured public API o
       canonicalUrl: 'https://personal.example',
       faviconUrl: 'https://api.portfolio.example/api/email/favicon?id=published-favicon',
     }
+  );
+  assert.equal(
+    resolveEmailBrandingUrls(
+      'https://portfolio.example',
+      'https://portfolio.example',
+      'http://images.example/email-brand.png',
+      'https://api.portfolio.example'
+    ).faviconUrl,
+    ''
+  );
+  assert.equal(
+    resolveEmailBrandingUrls(
+      'https://portfolio.example',
+      'https://portfolio.example',
+      '/api/portfolio-media/email-brand',
+      'http://api.portfolio.example'
+    ).faviconUrl,
+    ''
   );
 });
 
@@ -448,20 +483,32 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
         $set: {
           'profile.website': 'https://portfolio.example',
           'siteSettings.faviconUrl': '/api/portfolio-media/file-email-brand-test',
-          'siteSettings.emailFaviconEnabled': true,
+            'siteSettings.emailBrandImageUrl': '/api/portfolio-media/file-independent-email-brand',
+            'siteSettings.emailFaviconEnabled': true,
+          },
+      },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+    await AdminContentDraftModel.findOneAndUpdate(
+      { key: 'primary_portfolio_content' },
+      {
+        $set: {
+          updatedBy: 'email-brand-test',
+          'content.siteSettings.emailBrandImageUrl': '/api/portfolio-media/draft-email-brand',
+          'content.siteSettings.faviconUrl': '/api/portfolio-media/draft-favicon',
         },
       },
       { upsert: true, setDefaultsOnInsert: true }
     );
     const branding = await getEmailBranding('https://portfolio.example');
-    assert.equal(branding.faviconUrl, 'https://api.portfolio.example/api/email/favicon?id=file-email-brand-test');
+    assert.equal(branding.faviconUrl, 'https://api.portfolio.example/api/email/favicon?id=file-independent-email-brand');
 
     delete process.env.EMAIL_PUBLIC_BASE_URL;
     process.env.RENDER_EXTERNAL_URL = 'https://render-api.portfolio.example';
     const renderBranding = await getEmailBranding('https://portfolio.example');
     assert.equal(
       renderBranding.faviconUrl,
-      'https://render-api.portfolio.example/api/email/favicon?id=file-email-brand-test'
+      'https://render-api.portfolio.example/api/email/favicon?id=file-independent-email-brand'
     );
 
     delete process.env.RENDER_EXTERNAL_URL;
@@ -469,7 +516,7 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
     const hostnameBranding = await getEmailBranding('https://portfolio.example');
     assert.equal(
       hostnameBranding.faviconUrl,
-      'https://render-api.portfolio.example/api/email/favicon?id=file-email-brand-test'
+      'https://render-api.portfolio.example/api/email/favicon?id=file-independent-email-brand'
     );
 
     const transporter = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
@@ -484,9 +531,40 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
       ),
     });
     const mime = result.message.toString().replace(/=\r?\n/g, '');
-    assert.match(mime, /src=3D"https:\/\/render-api\.portfolio\.example\/api\/email\/favicon\?id=3Dfile-email-brand-test"/);
+    assert.match(mime, /src=3D"https:\/\/render-api\.portfolio\.example\/api\/email\/favicon\?id=3Dfile-independent-email-brand"/);
     assert.doesNotMatch(mime, /Content-ID:|Content-Disposition: inline|Content-Type: image\/|filename=/i);
     assert.doesNotMatch(mime, /Content-Disposition: attachment/i);
+
+    await SiteContentModel.updateOne(
+      { key: 'primary_portfolio_content' },
+      { $set: { 'siteSettings.emailFaviconEnabled': false } }
+    );
+    assert.equal((await getEmailBranding('https://portfolio.example')).faviconUrl, '');
+    await SiteContentModel.updateOne(
+      { key: 'primary_portfolio_content' },
+      { $set: { 'siteSettings.emailFaviconEnabled': true } }
+    );
+
+    await SiteContentModel.updateOne(
+      { key: 'primary_portfolio_content' },
+      {
+        $set: {
+          'siteSettings.emailBrandImageUrl': '',
+          'siteSettings.faviconUrl': '',
+        },
+      }
+    );
+    const draftOnlyBranding = await getEmailBranding('https://portfolio.example');
+    assert.equal(draftOnlyBranding.faviconUrl, '');
+    assert.match(
+      createPasswordResetEmailHtml(
+        'admin@example.test',
+        'https://portfolio.example/reset',
+        draftOnlyBranding.canonicalUrl,
+        draftOnlyBranding.faviconUrl
+      ),
+      />AJ<\/span>/
+    );
   } finally {
     if (originalEnvironment.appUrl === undefined) delete process.env.APP_URL;
     else process.env.APP_URL = originalEnvironment.appUrl;
@@ -499,6 +577,7 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
     if (originalEnvironment.corsAllowedOrigins === undefined) delete process.env.CORS_ALLOWED_ORIGINS;
     else process.env.CORS_ALLOWED_ORIGINS = originalEnvironment.corsAllowedOrigins;
     await SiteContentModel.deleteOne({ key: 'primary_portfolio_content' });
+    await AdminContentDraftModel.deleteOne({ key: 'primary_portfolio_content' });
     await mongoose.disconnect();
     await disconnectMongo();
   }

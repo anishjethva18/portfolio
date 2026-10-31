@@ -6,6 +6,33 @@ import { getCachedResumeBytes } from '../../utils/publishedPortfolioCache';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
+const pdfDocumentCache = new Map<string, Promise<PDFDocumentProxy>>();
+const renderedPdfUrls = new Set<string>();
+const MAX_CACHED_PDF_DOCUMENTS = 16;
+
+const loadPdfDocument = (url: string): Promise<PDFDocumentProxy> => {
+  const cached = pdfDocumentCache.get(url);
+  if (cached) {
+    pdfDocumentCache.delete(url);
+    pdfDocumentCache.set(url, cached);
+    return cached;
+  }
+
+  const request = getCachedResumeBytes(url)
+    .then((bytes) => pdfjs.getDocument({ data: bytes.slice() }).promise)
+    .catch((error: unknown) => {
+      if (pdfDocumentCache.get(url) === request) pdfDocumentCache.delete(url);
+      throw error;
+    });
+  pdfDocumentCache.set(url, request);
+  while (pdfDocumentCache.size > MAX_CACHED_PDF_DOCUMENTS) {
+    const oldestUrl = pdfDocumentCache.keys().next().value;
+    if (typeof oldestUrl !== 'string') break;
+    pdfDocumentCache.delete(oldestUrl);
+  }
+  return request;
+};
+
 interface PdfDocumentViewerProps {
   url: string;
   fitWidth?: boolean;
@@ -29,16 +56,13 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
   const [loading, setLoading] = useState(true);
   const [useNativeViewer, setUseNativeViewer] = useState(false);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
-  const hasRenderedDocumentRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    let loadingTask: ReturnType<typeof pdfjs.getDocument> | undefined;
     setPdfDocument(null);
     setError('');
-    setLoading(Boolean(url));
+    setLoading(Boolean(url) && !renderedPdfUrls.has(url));
     setUseNativeViewer(false);
-    hasRenderedDocumentRef.current = false;
     if (!url) {
       setLoading(false);
       return;
@@ -46,10 +70,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
 
     const loadDocument = async () => {
       try {
-        const bytes = await getCachedResumeBytes(url);
-        if (cancelled) return;
-        loadingTask = pdfjs.getDocument({ data: bytes.slice() });
-        const document = await loadingTask.promise;
+        const document = await loadPdfDocument(url);
         if (!cancelled) setPdfDocument(document);
       } catch (loadError) {
         if (cancelled) return;
@@ -70,10 +91,8 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
     };
 
     void loadDocument();
-
     return () => {
       cancelled = true;
-      void loadingTask?.destroy();
     };
   }, [url]);
 
@@ -90,7 +109,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
     const renderDocument = async () => {
       const generation = ++renderGeneration;
       if (!container.clientWidth) return;
-      if (!hasRenderedDocumentRef.current) setLoading(true);
+      if (!renderedPdfUrls.has(url)) setLoading(true);
       setError('');
       renderTasks.forEach((task) => task.cancel());
       renderTasks.length = 0;
@@ -139,7 +158,7 @@ export const PdfDocumentViewer: React.FC<PdfDocumentViewerProps> = ({
         }
         if (!cancelled && generation === renderGeneration) {
           container.replaceChildren(renderedPages);
-          hasRenderedDocumentRef.current = true;
+          renderedPdfUrls.add(url);
           setLoading(false);
         }
       } catch (renderError) {

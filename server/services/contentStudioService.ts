@@ -35,7 +35,8 @@ const CHANGE_FIELDS: Record<string, string> = {
   github: 'GitHub', linkedin: 'LinkedIn', instagram: 'Instagram', twitter: 'X / Twitter',
   socialLinks: 'Additional links', defaultTheme: 'Default theme', defaultWallpaper: 'Default wallpaper',
   defaultWallpaperUrl: 'Uploaded wallpaper', defaultIconTheme: 'Icon theme', defaultAccentColor: 'Accent color',
-  emailFaviconEnabled: 'Email favicon in emails', socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
+  emailFaviconEnabled: 'Email branding image in emails', emailBrandImageUrl: 'Email branding image',
+  socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
   siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
   portfolioVersion: 'Portfolio version',
   openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
@@ -400,7 +401,11 @@ function validateContent(content: Record<string, unknown>): string | null {
     siteSettings.twitterCard !== 'summary' && siteSettings.twitterCard !== 'summary_large_image') {
     return 'Twitter card type must be summary or summary_large_image.';
   }
-  for (const [field, label] of [['socialImageUrl', 'Social preview image'], ['faviconUrl', 'Favicon']] as const) {
+  for (const [field, label] of [
+    ['socialImageUrl', 'Social preview image'],
+    ['faviconUrl', 'Favicon'],
+    ['emailBrandImageUrl', 'Email branding image'],
+  ] as const) {
     const imageUrl = siteSettings?.[field];
     if (imageUrl === undefined) continue;
     if (typeof imageUrl !== 'string' || imageUrl.length > 2048) {
@@ -416,9 +421,14 @@ function validateContent(content: Record<string, unknown>): string | null {
     }
     try {
       const parsed = new URL(imageUrl);
-      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+      if (!['http:', 'https:'].includes(parsed.protocol) ||
+        (field === 'emailBrandImageUrl' && parsed.protocol !== 'https:') ||
+        parsed.username || parsed.password) throw new Error();
     } catch {
-      return `${label} URL must use http(s) or a public local portfolio path.`;
+      const urlRequirement = field === 'emailBrandImageUrl'
+        ? 'HTTPS or a public local portfolio path'
+        : 'http(s) or a public local portfolio path';
+      return `${label} URL must use ${urlRequirement}.`;
     }
   }
   const canonicalUrl = siteSettings?.canonicalUrl;

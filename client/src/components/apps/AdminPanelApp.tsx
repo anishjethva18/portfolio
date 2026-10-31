@@ -173,7 +173,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const fetchSystemHealth = async (silent = false) => {
-    if (!silent) {
+    if (!silent && !systemHealth) {
       setHealthLoading(true);
       setHealthError(null);
     }
@@ -387,7 +387,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const fetchAnalytics = async (recentPage = analyticsRecentPage, selectedActivityDays = activityDays, silent = false) => {
-    if (!silent) {
+    if (!silent && !analyticsData) {
       setAnalyticsLoading(true);
       setAnalyticsError(null);
     }
@@ -409,7 +409,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const fetchDashboard = async (silent = false) => {
-    if (!silent) {
+    if (!silent && !dashboardData) {
       setLoading(true);
       setError(null);
     }
@@ -428,7 +428,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
 
   const fetchProjects = async (silent = false) => {
     const requestMutationVersion = projectsMutationVersionRef.current;
-    if (!silent) setProjectsLoading(true);
+    if (!silent && projects.length === 0) setProjectsLoading(true);
     try {
       const res = await apiFetch('/api/admin/projects');
       const data = await res.json();
@@ -916,7 +916,7 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   };
 
   const fetchContacts = async (silent = false) => {
-    if (!silent) setContactsLoading(true);
+    if (!silent && contactsList.length === 0) setContactsLoading(true);
     try {
       const res = await apiFetch('/api/admin/contacts');
       const data = await res.json();

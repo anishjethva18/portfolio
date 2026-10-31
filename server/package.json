@@ -8,6 +8,7 @@
     "build": "cd .. && esbuild server/server.ts --bundle --platform=node --format=cjs --packages=external --outfile=server/server.bundle.cjs",
     "start": "cd .. && node -r ./server/loadEnv.cjs server/server.bundle.cjs",
     "test": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/backend-api.test.ts",
+    "test:widgets": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs --test server/tests/widgets-market-fallback.test.ts",
     "test:email": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/email-service.test.ts",
     "test:skills": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/skill-catalog.test.ts",
     "test:skill-icons": "cd .. && node -r ./server/testEnv.cjs --import=./server/node_modules/tsx/dist/loader.mjs server/tests/skill-icons-api.test.ts",

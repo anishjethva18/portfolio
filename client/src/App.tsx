@@ -14,7 +14,8 @@ import { AdminLoginScreen } from './components/apps/AdminLoginScreen';
 import { AdminDraftPreviewPage } from './components/apps/admin/AdminDraftPreviewPage';
 import { trackPortfolioAnalytics } from './utils/analytics';
 import { ConfirmDialogProvider } from './context/ConfirmDialogContext';
-import { applySeoMetadata } from './utils/seoMetadata';
+import { applyConfiguredFavicon, applySeoMetadata } from './utils/seoMetadata';
+import { getCachedPublishedContent } from './utils/publishedPortfolioCache';
 import { Construction, ShieldCheck, Clock3, Sparkles } from 'lucide-react';
 import { getAdminShortcut, matchesAdminShortcut } from './utils/adminShortcut';
 
@@ -45,6 +46,11 @@ const OSMainContent: React.FC = () => {
   React.useEffect(() => {
     let active = true;
     let publishedAppLayoutApplied = false;
+    applyConfiguredFavicon();
+    const cachedContent = getCachedPublishedContent();
+    if (cachedContent?.siteSettings) {
+      applySeoMetadata(cachedContent, window.location.href);
+    }
     const refreshMaintenanceSettings = async () => {
       try {
         const response = await fetch('/api/portfolio-content', { cache: 'no-store' });

@@ -4,7 +4,7 @@ import test from 'node:test';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import { renderHomepageMetadata } from '../../netlify/edge-functions/seo-metadata';
-import { buildSeoMetadata, renderSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
+import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
 import { contentStudioRouter } from '../routes/contentStudio';
 
 const publishedContent = {
@@ -28,6 +28,73 @@ const publishedContent = {
     twitterDescription: 'Published Twitter description.',
   },
 };
+
+function createFaviconDocument(configuredFavicon: string) {
+  const attributes = new Map<string, string>();
+  const fallback = 'data:image/svg+xml,immediate-aj-fallback';
+  const icon = {
+    rel: 'icon',
+    href: fallback,
+    type: 'image/svg+xml',
+    dataset: { configuredFavicon },
+    parentElement: {},
+    hasAttribute: (name: string) => name === 'href' || attributes.has(name),
+    setAttribute: (name: string, value: string) => {
+      if (name === 'href') icon.href = value;
+      else attributes.set(name, value);
+    },
+    removeAttribute: (name: string) => {
+      if (name === 'href') icon.href = '';
+      else attributes.delete(name);
+    },
+  } as unknown as HTMLLinkElement;
+  const pendingImages: Array<{
+    src: string;
+    onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
+    onerror: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
+  }> = [];
+  class MockImage {
+    src = '';
+    onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null = null;
+    onerror: ((this: GlobalEventHandlers, event: Event) => unknown) | null = null;
+
+    constructor() {
+      pendingImages.push(this);
+    }
+  }
+  const head = {
+    querySelectorAll: <T extends Element>() => [icon] as unknown as NodeListOf<T>,
+    querySelector: () => icon,
+    appendChild: (element: Node) => element,
+  };
+  const document = {
+    baseURI: 'https://portfolio.example.test/',
+    head,
+    defaultView: { Image: MockImage },
+    createElement: () => icon,
+  } as unknown as Document;
+  return { document, icon, pendingImages, fallback };
+}
+
+test('cached website favicon replaces the inline fallback only after its image loads', () => {
+  const configuredUrl = 'https://portfolio.example.test/cached-icon.png?test=success';
+  const { document, icon, pendingImages, fallback } = createFaviconDocument(configuredUrl);
+
+  applyConfiguredFavicon(document);
+  assert.equal(icon.href, fallback);
+  assert.equal(pendingImages[0].src, configuredUrl);
+  pendingImages[0].onload?.call(pendingImages[0] as unknown as GlobalEventHandlers, new Event('load'));
+  assert.equal(icon.href, configuredUrl);
+});
+
+test('failed website favicon loading leaves the inline fallback in place', () => {
+  const configuredUrl = 'https://portfolio.example.test/missing-icon.png?test=failure';
+  const { document, icon, pendingImages, fallback } = createFaviconDocument(configuredUrl);
+
+  applyConfiguredFavicon(document);
+  pendingImages[0].onerror?.call(pendingImages[0] as unknown as GlobalEventHandlers, new Event('error'));
+  assert.equal(icon.href, fallback);
+});
 
 test('homepage metadata is present in the initial HTML exactly once', async () => {
   const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
@@ -56,7 +123,9 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
   assert.match(rendered, /<title data-seo="title">Published Homepage Title<\/title>/);
   assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
   assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/"/);
-  assert.match(rendered, /rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
+  assert.match(rendered, /rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(rendered, /data-configured-favicon="https:\/\/portfolio\.example\.test\/favicon\.png"/);
+  assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
   assert.match(rendered, /name="twitter:title" content="Published Twitter title"/);
   assert.match(rendered, /name="twitter:description" content="Published Twitter description\."/);
   assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
@@ -96,13 +165,22 @@ test('homepage metadata replaces duplicate tags and makes configured image URLs 
   }
 
   for (const url of [
-    rendered.match(/rel="icon" href="([^"]+)"/)?.[1],
+    rendered.match(/data-configured-favicon="([^"]+)"/)?.[1],
+    rendered.match(/rel="preload" as="image" href="([^"]+)"/)?.[1],
     rendered.match(/property="og:image" content="([^"]+)"/)?.[1],
     rendered.match(/name="twitter:image" content="([^"]+)"/)?.[1],
   ]) {
     assert.ok(url);
     assert.equal(new URL(url).origin, 'https://portfolio.example.test');
   }
+});
+
+test('homepage HTML keeps an immediate fallback favicon while preloading the configured icon', async () => {
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  const rendered = renderSeoMetadataHtml(html, publishedContent, 'https://portfolio.example.test/');
+  assert.equal(rendered.match(/<link rel="icon"/g)?.length, 1);
+  assert.match(rendered, /<link rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
 });
 
 test('empty settings use safe absolute defaults and untrusted text is escaped', () => {

@@ -26,7 +26,7 @@ async function getResourcePolicy(isPubliclyReferenced: boolean): Promise<string 
   }
 }
 
-test('publicly referenced portfolio media can be embedded by social preview origins', async () => {
+test('publicly referenced portfolio and email branding media can be embedded cross-origin', async () => {
   assert.equal(await getResourcePolicy(true), 'cross-origin');
 });
 

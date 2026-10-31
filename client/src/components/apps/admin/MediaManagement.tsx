@@ -7,6 +7,7 @@ import { useResponsivePageSize } from '../../../hooks/useResponsivePageSize';
 import { formatAdminDateTime } from '../../../utils/dateTime';
 import { buildPortfolioMediaUrl, getPortfolioMediaId } from '../../../utils/portfolioMedia';
 import { getContentState } from '../../../utils/adminDraftStatus';
+import { clearCachedMediaPreview, getCachedMediaPreviewUrl, loadCachedMediaPreviewUrl } from '../../../utils/mediaPreviewCache';
 
 interface MediaManagementProps {
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
@@ -59,7 +60,7 @@ const MediaThumbnail: React.FC<{
   file: MediaFile;
   onOpen: () => void;
 }> = ({ file, onOpen }) => {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(() => getCachedMediaPreviewUrl(file) || '');
   const extension = (file.extension || '').toLowerCase();
   const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension);
   const isPdf = extension === 'pdf';
@@ -68,22 +69,20 @@ const MediaThumbnail: React.FC<{
 
   useEffect(() => {
     let active = true;
-    let objectUrl = '';
     if (isPdf) return () => { active = false; };
-    void fetch(`/api/files/download/${encodeURIComponent(file.id)}`, { credentials: 'include' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Preview request failed (${response.status}).`);
-        const blob = await response.blob();
-        if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
+    const cachedUrl = getCachedMediaPreviewUrl(file);
+    if (cachedUrl) {
+      setUrl(cachedUrl);
+      return () => { active = false; };
+    }
+    setUrl('');
+    void loadCachedMediaPreviewUrl(file)
+      .then((previewUrl) => {
+        if (active) setUrl(previewUrl);
       })
       .catch((error: unknown) => console.error(`Could not load media thumbnail for ${file.name}.`, error));
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [file.id, file.name, isPdf]);
+    return () => { active = false; };
+  }, [file.id, file.name, file.modified, file.uploadedAt, file.size, isPdf]);
 
   return (
     <div className="admin-media-preview-stage relative grid h-[230px] w-full place-items-center overflow-hidden border-b border-slate-100 bg-gradient-to-br from-slate-50 to-sky-50/60">
@@ -109,6 +108,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
   const [savedResumes, setSavedResumes] = useState<ResumeEntry[]>(() => mediaManagementCache.savedResumes);
   const [resumesLoaded, setResumesLoaded] = useState(() => mediaManagementCache.resumesLoaded);
   const [resumeLoading, setResumeLoading] = useState(() => !mediaManagementCache.resumesLoaded);
+  const resumesLoadedRef = useRef(mediaManagementCache.resumesLoaded);
   const [resumeSaving, setResumeSaving] = useState(false);
   const [resumeUploadingId, setResumeUploadingId] = useState<string | null>(null);
   const [resumeMessage, setResumeMessage] = useState('');
@@ -185,7 +185,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
   }, [resumePageCount]);
 
   const loadResumes = useCallback(async (silent = false) => {
-    if (!silent) setResumeLoading(true);
+    if (!silent && !resumesLoadedRef.current) setResumeLoading(true);
     try {
       const response = await apiFetch('/api/admin/content-studio');
       const data = await response.json();
@@ -212,6 +212,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       setResumes((current) => JSON.stringify(current) === JSON.stringify(entries) ? current : entries);
       setSavedResumes((current) => JSON.stringify(current) === JSON.stringify(entries) ? current : entries);
       setResumesLoaded(true);
+      resumesLoadedRef.current = true;
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load resume settings.');
@@ -273,7 +274,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       setResumes(persisted);
       setSavedResumes(persisted);
       if (!throwOnError) setResumeMessage('Resume changes saved to draft. Publish separately to update the public CV app.');
-      await loadResumes();
+      await loadResumes(true);
       await onSaved?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Resume draft could not be saved.');
@@ -371,6 +372,7 @@ export const MediaManagement: React.FC<MediaManagementProps> = ({ apiFetch, onDr
       const response = await apiFetch(`/api/files/${encodeURIComponent(file.id)}`, { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed.');
+      clearCachedMediaPreview(file.id);
       setFiles((current) => current.filter((entry) => entry.id !== file.id));
       setResumes((current) => current.map((resume) => getPortfolioMediaId(resume.file) === file.id ? { ...resume, file: '' } : resume));
       setSavedResumes((current) => current.map((resume) => getPortfolioMediaId(resume.file) === file.id ? { ...resume, file: '' } : resume));

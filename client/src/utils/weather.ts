@@ -274,8 +274,10 @@ export async function fetchLiveWeather(
         humidity,
         windSpeed: Number.isFinite(cw.windspeed) ? Math.round(cw.windspeed) : undefined,
         uvIndex,
-        isLive: true,
-        lastUpdated: Date.now(),
+        isLive: payload.stale !== true,
+        lastUpdated: typeof payload.updatedAt === 'string' && Number.isFinite(Date.parse(payload.updatedAt))
+          ? Date.parse(payload.updatedAt)
+          : Date.now(),
         forecast,
       };
 

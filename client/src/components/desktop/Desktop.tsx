@@ -127,32 +127,6 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
       updateMeta('meta[name="twitter:title"]', 'name', 'twitter:title', siteSettings.siteTitle);
       updateMeta('meta[name="twitter:description"]', 'name', 'twitter:description', siteSettings.metaDescription);
       updateMeta('meta[name="twitter:image"]', 'name', 'twitter:image', siteSettings.socialImageUrl);
-      const faviconUrl = typeof siteSettings.faviconUrl === 'string' ? siteSettings.faviconUrl.trim() : '';
-      let favicon = document.head.querySelector<HTMLLinkElement>('link[data-portfolio-favicon]');
-      if (!faviconUrl) {
-        favicon?.remove();
-      } else {
-        if (!favicon) {
-          favicon = document.createElement('link');
-          favicon.rel = 'icon';
-          favicon.dataset.portfolioFavicon = 'true';
-          document.head.appendChild(favicon);
-        }
-        favicon.href = new URL(faviconUrl, window.location.href).href;
-        const faviconExtension = faviconUrl.split(/[?#]/, 1)[0].split('.').pop()?.toLowerCase();
-        const faviconMimeTypes: Record<string, string> = {
-          ico: 'image/x-icon',
-          png: 'image/png',
-          jpg: 'image/jpeg',
-          jpeg: 'image/jpeg',
-          webp: 'image/webp',
-          gif: 'image/gif',
-          svg: 'image/svg+xml',
-        };
-        const faviconType = faviconExtension ? faviconMimeTypes[faviconExtension] : undefined;
-        if (faviconType) favicon.type = faviconType;
-        else favicon.removeAttribute('type');
-      }
       let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
       if (canonicalUrl && /^https?:\/\//i.test(canonicalUrl)) {
         if (!canonical) {

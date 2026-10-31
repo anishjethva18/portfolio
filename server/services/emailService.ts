@@ -4,7 +4,7 @@ import type { SendMailOptions, SentMessageInfo, Transporter } from 'nodemailer';
 import { EmailConfig, EmailProvider, getEmailConfig } from '../config/emailConfig';
 import { ValidatedContactBody } from '../middleware/validation';
 import { db } from '../db/database';
-import { AdminContentDraftModel, ContactModel, SiteContentModel } from '../models';
+import { ContactModel, SiteContentModel } from '../models';
 import { formatEmailTimestamp } from '../utils/dateTime';
 
 export interface StoredContactMessage {
@@ -96,7 +96,7 @@ export const resolveEmailBrandingUrls = (
     : isHttpUrl(configuredClientUrl)
       ? configuredClientUrl
       : '';
-  const faviconBaseUrl = getPublicHttpOrigin(configuredEmailPublicBaseUrl);
+  const faviconBaseUrl = getPublicHttpsOrigin(configuredEmailPublicBaseUrl);
   let faviconUrl = '';
 
   if (publishedFavicon) {
@@ -110,7 +110,9 @@ export const resolveEmailBrandingUrls = (
         return { canonicalUrl, faviconUrl };
       }
       const resolvedFavicon = new URL(publishedFavicon, faviconBaseUrl || undefined);
-      if (['http:', 'https:'].includes(resolvedFavicon.protocol)) faviconUrl = resolvedFavicon.href;
+      if (resolvedFavicon.protocol === 'https:' && !resolvedFavicon.username && !resolvedFavicon.password) {
+        faviconUrl = resolvedFavicon.href;
+      }
     } catch {
       faviconUrl = '';
     }
@@ -126,24 +128,16 @@ export const getEmailBranding = async (requestPublicOrigin = ''): Promise<Publis
   if (mongoose.connection.readyState === 1) {
     try {
       const content = await SiteContentModel.findOne({ key: 'primary_portfolio_content' })
-        .select('profile.website siteSettings.faviconUrl siteSettings.emailFaviconEnabled')
+        .select('profile.website siteSettings.faviconUrl siteSettings.emailBrandImageUrl siteSettings.emailFaviconEnabled')
         .lean();
       publishedWebsite = typeof content?.profile?.website === 'string' ? content.profile.website.trim() : '';
       emailFaviconEnabled = isEmailFaviconEnabled(content?.siteSettings?.emailFaviconEnabled);
-      publishedFavicon = typeof content?.siteSettings?.faviconUrl === 'string'
-        ? content.siteSettings.faviconUrl.trim()
-        : '';
-      if (emailFaviconEnabled && !publishedFavicon) {
-        const draft = await AdminContentDraftModel.findOne({ key: 'primary_portfolio_content' })
-          .select('content.siteSettings.faviconUrl')
-          .lean();
-        const draftContent = draft?.content as Record<string, unknown> | undefined;
-        const draftSettings = draftContent?.siteSettings;
-        const draftFavicon = draftSettings && typeof draftSettings === 'object'
-          ? (draftSettings as Record<string, unknown>).faviconUrl
-          : undefined;
-        publishedFavicon = typeof draftFavicon === 'string' ? draftFavicon.trim() : '';
-      }
+      publishedFavicon = typeof content?.siteSettings?.emailBrandImageUrl === 'string' &&
+        content.siteSettings.emailBrandImageUrl.trim()
+        ? content.siteSettings.emailBrandImageUrl.trim()
+        : typeof content?.siteSettings?.faviconUrl === 'string'
+          ? content.siteSettings.faviconUrl.trim()
+          : '';
     } catch (error) {
       console.warn('[EmailService] Could not load published email branding or favicon asset.', error);
     }
@@ -211,9 +205,14 @@ const getPublicHttpOrigin = (value: string): string => {
   }
 };
 
+const getPublicHttpsOrigin = (value: string): string => {
+  const origin = getPublicHttpOrigin(value);
+  return origin && new URL(origin).protocol === 'https:' ? origin : '';
+};
+
 // HTML Email Template for Portfolio Inquiries
 export const getEmailBrandMark = (faviconUrl: string): string => faviconUrl
-    ? `<img src="${escapeHtml(faviconUrl)}" alt="" width="36" height="36" border="0" style="display:block;width:36px;height:36px;max-width:36px;max-height:36px;object-fit:contain;border:0;border-radius:8px;" />`
+    ? `<img src="${escapeHtml(faviconUrl)}" alt="AJ" width="36" height="36" border="0" style="display:block;width:36px;height:36px;max-width:36px;max-height:36px;object-fit:contain;border:0;border-radius:8px;font-family:Arial,sans-serif;font-size:18px;font-weight:800;color:#4f46e5;" />`
   : '<span style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:18px;font-weight:800;color:#4f46e5;letter-spacing:-0.5px;display:block;line-height:44px;">AJ</span>';
 
 const getEmailBrandHeader = (label: string, faviconUrl: string): string => `
