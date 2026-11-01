@@ -10,16 +10,19 @@
   from = "/social-preview.jpg"
   to = "https://portfolio-ub24.onrender.com/social-preview.jpg"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/social-preview.png"
   to = "https://portfolio-ub24.onrender.com/social-preview.png"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/social-preview.webp"
   to = "https://portfolio-ub24.onrender.com/social-preview.webp"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/api/*"

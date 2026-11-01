@@ -271,16 +271,25 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
 
 test('Netlify proxies only generated social formats and preserves API and SEO routing', async () => {
   const config = await readFile(new URL('../../netlify.toml', import.meta.url), 'utf8');
-  const socialRoutes = [...config.matchAll(/from = "\/social-preview\.([a-z]+)"/g)]
-    .map((match) => match[1])
-    .sort();
-  const socialRedirects = config.split('[[redirects]]')
-    .filter((block) => block.includes('from = "/social-preview.'));
-  assert.deepEqual(socialRoutes, ['jpg', 'png', 'webp']);
-  assert.equal(socialRedirects.length, 3);
-  assert.ok(socialRedirects.every((block) => !/force\s*=\s*true/.test(block)));
+  const expectedFormats = ['jpg', 'png', 'webp'];
+  const socialRedirects = config.split('[[redirects]]').slice(1);
+  const socialBlocks = socialRedirects.filter((block) => block.includes('from = "/social-preview.'));
+  assert.equal(socialBlocks.length, expectedFormats.length);
+
+  for (const extension of expectedFormats) {
+    const redirectIndex = config.indexOf(`from = "/social-preview.${extension}"`);
+    const block = socialBlocks.find((candidate) => candidate.includes(`from = "/social-preview.${extension}"`));
+    assert.ok(block, `missing Netlify proxy for generated ${extension} preview`);
+    assert.match(block, new RegExp(`to = "https://portfolio-ub24\\.onrender\\.com/social-preview\\.${extension}"`));
+    assert.match(block, /status = 200/);
+    assert.match(block, /force = true/);
+    assert.ok(redirectIndex < config.indexOf('from = "/*"'), `${extension} proxy must precede the SPA fallback`);
+  }
+
+  assert.equal([...config.matchAll(/from = "\/social-preview\.[a-z]+"/g)].length, expectedFormats.length);
   assert.match(config, /function = "seo-metadata"\s+path = "\/"/);
   assert.match(config, /from = "\/api\/\*"\s+to = "https:\/\/portfolio-ub24\.onrender\.com\/api\/:splat"\s+status = 200\s+force = true/);
+  assert.ok(config.indexOf('from = "/api/*"') < config.indexOf('from = "/*"'));
 });
 
 test('publishing SEO metadata remains unavailable without administrator authentication', async () => {

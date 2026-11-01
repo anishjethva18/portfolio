@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta
+      name="google-site-verification"
+      content="PTkfgGT7jEVsM_roPaLhTQisAkhShHeShfgLNzU6GqI"
+    />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="description" content="Interactive Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps." />
+    <meta
+      name="keywords"
+      content="Windows 11, Web OS, React OS, Developer Portfolio, Virtual Desktops, Interactive OS, TypeScript, TailwindCSS"
+    />
+    <meta name="author" content="Anish Jethva" />
+    <!-- Browser theme -->
+    <meta name="theme-color" content="#1e1e1e" />
+
+    <link rel="canonical" href="https://anishjethva.netlify.app" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E" type="image/svg+xml" data-configured-favicon="https://anishjethva.netlify.app/api/portfolio-media/favicon(1).png?id=file-6bd5bb9b-e6a0-4a30-bedf-636f2168fe3f" />
+    <meta property="og:site_name" content="Developer Portfolio" data-seo="og:site_name" />
+    <meta property="og:title" content="Windows 11 Portfolio OS" />
+    <meta property="og:description" content="Interactive Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps." />
+    <meta property="og:image" content="https://anishjethva.netlify.app/api/portfolio-media/social-preview.jpg?id=file-951db1cf-d705-46ae-9cab-a97ad0c3001e" />
+    <meta property="og:url" content="/" data-seo="og:url" />
+    <meta property="og:type" content="website" data-seo="og:type" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Windows 11 Portfolio OS" />
+    <meta name="twitter:description" content="Interactive Windows 11 web operating system portfolio showcasing full-stack projects, AI agents, and interactive apps." />
+    <meta name="twitter:image" content="https://anishjethva.netlify.app/api/portfolio-media/social-preview.jpg?id=file-951db1cf-d705-46ae-9cab-a97ad0c3001e" />
+    <script id="website-jsonld" type="application/ld+json">
+      {"@context":"https://schema.org","@type":"WebSite","name":"Developer Portfolio","url":"/"}
+    </script>
+
+    <title data-seo="title">Developer Portfolio</title>
+    <script type="module" crossorigin src="/assets/index-w_ChSeeu.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-react-core-3cUfQKQW.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-lucide-J_9Ekj42.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-motion-DP523cWR.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-C3wL0ah1.css">
+      <link rel="preload" as="image" href="https://anishjethva.netlify.app/api/portfolio-media/favicon(1).png?id=file-6bd5bb9b-e6a0-4a30-bedf-636f2168fe3f" data-seo-favicon-preload="true" />
+  </head>
+  <body class="overflow-hidden select-none bg-[#1e1e1e]">
+    <div id="root"></div>
+  </body>
+</html>
