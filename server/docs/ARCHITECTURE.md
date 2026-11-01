@@ -34,7 +34,7 @@ The storage root defaults to `server/storage/` and can be changed with `PORTFOLI
 - `client/vite.config.ts`: Vite setup and client source alias.
 - `server/tsconfig.json`: server typecheck configuration.
 - `server/.env.example`: names and examples for optional server runtime configuration.
-- `netlify.toml`: deployment build and publish settings.
+- `client/netlify.toml`: Netlify build, publish, edge-function, and routing settings.
 
 ## Runtime Data and Secrets
 

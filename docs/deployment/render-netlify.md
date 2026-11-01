@@ -205,12 +205,12 @@ Email ko `ADMIN_EMAIL` ke saath match karein. Script `ADMIN_SETUP_TOKEN` environ
 ## 4. Netlify par frontend deploy karein
 
 1. Netlify dashboard → **Add new site** → **Import an existing project** → wahi GitHub repository select karein.
-2. Base directory blank/repo root rakhein.
+2. Base directory blank/repo root rakhein aur **Package directory** `client` set karein, taaki Netlify `client/netlify.toml` ko configuration ke roop mein load kare.
 3. Build command: `npm ci --prefix client && npm --prefix client run build`
 4. Publish directory: `client/dist`
 5. Deploy se pehle API proxy rule neeche diye gaye tareeqe se configure karein.
 
-Repo mein root [netlify.toml](../../netlify.toml) `client/` dependencies install karke `client/dist` build/publish karta hai aur SPA ke liye `/*` fallback redirect rakhta hai. Is fallback se **pehle** `/api/*` proxy rule add karein. `YOUR-RENDER-SERVICE` ko Render ke actual service hostname se replace karein:
+Repo mein [client/netlify.toml](../../client/netlify.toml) `client/` dependencies install karke `client/dist` build/publish karta hai, SEO edge function ko `client/edge-functions/` se load karta hai, aur SPA ke liye `/*` fallback redirect rakhta hai. Is fallback se **pehle** `/api/*` proxy rule add karein. `YOUR-RENDER-SERVICE` ko Render ke actual service hostname se replace karein:
 
 ```toml
 [[redirects]]
@@ -220,7 +220,7 @@ Repo mein root [netlify.toml](../../netlify.toml) `client/` dependencies install
   force = true
 ```
 
-Order important hai: API proxy rule SPA fallback se pehle hona chahiye. Apna Render URL badalne par is rule ko bhi update karke Netlify redeploy karein. Netlify deploy settings mein command/publish directory ko root `netlify.toml` ke values ke saath match rakhein.
+Order important hai: API proxy rule SPA fallback se pehle hona chahiye. Apna Render URL badalne par is rule ko bhi update karke Netlify redeploy karein. Netlify deploy settings mein Package directory `client` aur base directory repository root rakhein.
 
 Deploy ke baad Netlify ka public URL note karein. Agar custom domain bhi use karte hain, Render ke `APP_URL` aur `CORS_ALLOWED_ORIGINS` mein exact HTTPS origins update karein, phir Render redeploy karein.
 
@@ -296,4 +296,4 @@ public as part of this verification.
 
 - **GitHub:** project ka source repo, `client/`, `server/`, dono lockfiles, aur config files. `.env`, secrets, `node_modules/`, private uploads/backup commit nahi.
 - **Render:** GitHub repo select karein; Render build mein server dependencies, client build, server bundle tino bante hain. Environment variables aur persistent disk Render dashboard mein configure hote hain.
-- **Netlify:** usi GitHub repo ko select karein; publish sirf `client/dist/`. Render service create hone ke baad `netlify.toml` mein API proxy rule add karke frontend ko backend se jodein.
+- **Netlify:** usi GitHub repo ko select karein; base directory repository root, Package directory `client`, aur publish directory `client/dist/` rakhein. Render service create hone ke baad `client/netlify.toml` mein API proxy rule ko us service se match karke frontend ko backend se jodein.

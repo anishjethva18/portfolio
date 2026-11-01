@@ -69,7 +69,6 @@ The current source scan found **199 TypeScript/TSX/JavaScript/CJS files** (**126
 | `README.md` | Project overview, stack, architecture sketch, setup, and common operations |
 | `.gitignore` | Excludes dependency/build directories, environment files, and `server/storage/` |
 | `netlify.toml` | Builds the client and publishes `client/dist`; includes SPA fallback routing |
-| `metadata.json` | Small project metadata file. Static source search did not find a runtime import/reference to this root copy; see “Extra files” before considering it for removal |
 | `full-backup-2026-10-14T20-50-27-826Z.json` | A full backup artifact (6,454,767 bytes); its SHA-256 matches the copy in `server/storage/AdminArchive/Backups/`. Treat as sensitive recovery data |
 | `client/` | Frontend application, static assets, and its independent package/lock files |
 | `server/` | API, persistence, service integrations, tests, docs, and runtime data |
@@ -80,6 +79,7 @@ There is no root-level `package.json`; client and server dependencies/scripts ar
 
 | Path | Purpose |
 |---|---|
+| `client/metadata.json` | Project metadata, including browser permission and capability declarations |
 | `client/package.json` / `client/package-lock.json` | Frontend dependencies and reproducible npm install; scripts include Vite build and TypeScript type-check |
 | `client/vite.config.ts` | React/Tailwind Vite configuration, source alias, development API proxy, code chunk naming/splitting |
 | `client/tsconfig.json` | TypeScript compiler configuration |
@@ -182,7 +182,7 @@ File size alone does not prove poor design or a bug. It does increase the cost o
 | `server/server.bundle.cjs.map` (792,355 bytes) | Generated source map | Rebuildable, but currently not matched by the bundle ignore rule. Ensure it is not unintentionally committed or publicly deployed; source maps can reveal implementation details |
 | `server/storage/` | Runtime uploads, media index and backups | **Not extra. Preserve and back up.** Current inventory: 5 files at the storage root (about 4.56 MB), 12 files under `Portfolio/` including `.media-index.json` (11 media files, about 5.78 MB), 8 archive backups (about 55.9 MB), and one skills-migration JSON under `Backups/` (about 0.18 MB) |
 | `full-backup-2026-10-14T20-50-27-826Z.json` (6,454,767 bytes) | Backup data | **Not a build artifact. Preserve securely.** Its SHA-256 is identical to `server/storage/AdminArchive/Backups/full-backup-2026-10-14T20-50-27-826Z.json`; this is a duplicate copy, not proof that either can be removed without a recovery decision. At the time of the initial audit, the root ignore rules did not exclude this pattern; Section 12 records the follow-up ignore rule |
-| Root `metadata.json` | Possible unused root metadata | No static runtime reference to this root file was found; `initialFileSystem.ts` contains a *virtual filesystem entry* also named `metadata.json`, which is not the same file. Confirm its origin/required tooling before removal |
+| `client/metadata.json` (formerly root `metadata.json`) | Project metadata | No static runtime reference was found; retained and relocated into the client directory as requested. `initialFileSystem.ts` also contains a virtual filesystem entry named `metadata.json`, which is separate |
 | `server/routes/portfolio.ts` | Possibly unmounted route module | Not mounted from `server/server.ts` in the current startup path, but two test suites import and mount it. Treat as an API/legacy-contract decision, not confirmed dead code |
 | `client/public/downloads/Windows_11.jpg` and `Windows11.jpg` | Static image assets | Both names are seeded/referenced in the virtual filesystem/default wallpaper flow. Their hashes differ, so they are not byte-identical duplicates |
 | `client/public/videos/React_Debug_Walkthrough.mp4` | Static demo asset | Seeded into the virtual filesystem. It may be removable only if that demo is intentionally removed from the user-facing experience |
@@ -347,7 +347,7 @@ Authentication, session handling, CSRF, protected admin routes, and storage path
 - Review database query plans and pagination for admin/history/analytics/file lists as data grows.
 - Maintain one source of truth for API routes; decide whether the unmounted `portfolioRouter` endpoint is a supported compatibility API or legacy test-only code.
 - Clarify Netlify deployment topology. Current `netlify.toml` publishes a static client and does not configure an API-host rewrite; document/provide the required production API origin or proxy.
-- Keep README and metadata descriptions current. `metadata.json` describes JWT authentication while project docs/source describe server-side opaque sessions.
+- Keep README and metadata descriptions current. `client/metadata.json` describes server-side administrator sessions.
 
 ## 9. Validation and confidence
 
@@ -362,7 +362,7 @@ Authentication, session handling, CSRF, protected admin routes, and storage path
 ## 10. Final answer to “which files are extra?”
 
 - **Clearly generated/re-creatable:** `client/dist/`, both `node_modules/` directories, and `server/server.bundle.cjs` (plus its source map).
-- **Possible unused/legacy candidates requiring confirmation:** root `metadata.json` and the production-unmounted `server/routes/portfolio.ts`.
+- **Possible unused/legacy candidates requiring confirmation:** the production-unmounted `server/routes/portfolio.ts`.
 - **Do not classify as extra:** `server/storage/`, root full-backup JSON, `client/public/`, lockfiles, or seeded virtual-filesystem assets. Some may not be executable code, but they are runtime, recovery, deployment, or product data.
 
 No cleanup was performed. This preserves the project exactly as requested.
@@ -495,7 +495,7 @@ This continuation was performed against isolated local builds and test databases
 |---|---|
 | `client/vite.config.ts` | Added `preview.proxy: {}` so Vite preview cannot inherit the development `/api` proxy and forward API requests to an unknown local service. |
 | `server/tests/e2e_walkthrough.test.ts` | Added `PORTFOLIO_E2E_DIST_DIR` support so E2E can serve a temporary build without overwriting `client/dist`; blocks browser requests to off-origin HTTP(S) endpoints and checks analytics requests stay same-origin; records local load/resource, media app-open, heap, drag, and resize smoke metrics. The window interaction test uses Calculator because non-calculator apps open maximized by design; Camera remains used for its settings-overlay bounds assertion. |
-| `metadata.json` | Corrected the project description to state server-side administrator sessions rather than JWT authentication. |
+| `client/metadata.json` (then at repository root) | Corrected the project description to state server-side administrator sessions rather than JWT authentication; later relocated into `client/`. |
 | `server/docs/API_INVENTORY.md` | Clarified that `server/routes/portfolio.ts` is a legacy unmounted router and `/api/projects` is the active public endpoint; the legacy route remains in place pending integration compatibility checks. |
 | `PROJECT_ANALYSIS_REPORT.md` | Added this Phase 3–6 evidence and status section. |
 
@@ -535,7 +535,7 @@ The initial report's earlier build snapshot was 16,842,138 client bytes and a 43
 
 ### 13.4 Maintainability assessment
 
-- `metadata.json` and `server/docs/API_INVENTORY.md` were reconciled with the actual session authentication and mounted project routes.
+- `client/metadata.json` and `server/docs/API_INVENTORY.md` were reconciled with the actual session authentication and mounted project routes.
 - The large UI/API modules remain coupled, broad files; no evidence justified a behavior-changing extraction during this continuation without narrower component-level regression tests.
 - The current `client/tsconfig.json` and `server/tsconfig.json` both enable `strict: true`; the current client and server type-check commands pass with **zero compiler diagnostics**. This supersedes the earlier diagnostic count and configuration note recorded before strict mode was enabled.
 - `server/routes/portfolio.ts` is retained because tests use it and external compatibility has not been checked. It is not a mounted production API.

@@ -1,6 +1,7 @@
 [build]
   command = "npm ci --prefix client && npm --prefix client run build"
   publish = "client/dist"
+  edge_functions = "client/edge-functions"
 
 [[edge_functions]]
   function = "seo-metadata"

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import cookieParser from 'cookie-parser';
 import express from 'express';
-import { renderHomepageMetadata } from '../../netlify/edge-functions/seo-metadata';
+import { renderHomepageMetadata } from '../../client/edge-functions/seo-metadata';
 import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
 import { contentStudioRouter } from '../routes/contentStudio';
 
@@ -270,7 +270,7 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
 });
 
 test('Netlify proxies only generated social formats and preserves API and SEO routing', async () => {
-  const config = await readFile(new URL('../../netlify.toml', import.meta.url), 'utf8');
+  const config = await readFile(new URL('../../client/netlify.toml', import.meta.url), 'utf8');
   const expectedFormats = ['jpg', 'png', 'webp'];
   const socialRedirects = config.split('[[redirects]]').slice(1);
   const socialBlocks = socialRedirects.filter((block) => block.includes('from = "/social-preview.'));
@@ -287,6 +287,7 @@ test('Netlify proxies only generated social formats and preserves API and SEO ro
   }
 
   assert.equal([...config.matchAll(/from = "\/social-preview\.[a-z]+"/g)].length, expectedFormats.length);
+  assert.match(config, /edge_functions = "client\/edge-functions"/);
   assert.match(config, /function = "seo-metadata"\s+path = "\/"/);
   assert.match(config, /from = "\/api\/\*"\s+to = "https:\/\/portfolio-ub24\.onrender\.com\/api\/:splat"\s+status = 200\s+force = true/);
   assert.ok(config.indexOf('from = "/api/*"') < config.indexOf('from = "/*"'));

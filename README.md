@@ -249,7 +249,7 @@ All application APIs use the `/api` prefix. For endpoint details and access requ
 - [ ] Use persistent, writable storage for uploaded media and server backups; back up MongoDB and files together.
 - [ ] Verify admin sign-in, cookies, publishing, analytics, uploads, contact handling, and optional integrations in the deployed environment.
 
-The root `netlify.toml` builds and publishes `client/dist/` for frontend hosting. The Express API must also be deployed to a Node.js host and configured for the production frontend origin and database.
+`client/netlify.toml` configures the Netlify frontend build, API proxy, SEO edge function, and SPA fallback. In Netlify, keep the base directory at the repository root and set the Package directory to `client`. The Express API must also be deployed to a Node.js host and configured for the production frontend origin and database.
 
 ## 📦 Data and uploads
 

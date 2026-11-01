@@ -1,4 +1,4 @@
-import { renderSeoMetadataHtml, type SeoContent } from '../../client/src/utils/seoMetadata.ts';
+import { renderSeoMetadataHtml, type SeoContent } from '../src/utils/seoMetadata.ts';
 
 type EdgeContext = {
   next: () => Promise<Response>;
