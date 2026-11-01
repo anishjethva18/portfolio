@@ -39,6 +39,7 @@ import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
 import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
 import { renderSeoMetadataHtml } from '../client/src/utils/seoMetadata';
+import { handlePublishedSeoMetadata, loadPublishedSeoMetadata } from './services/seoMetadataService';
 import {
   buildContentSecurityPolicyDirectives,
   buildCorsPolicy,
@@ -194,53 +195,7 @@ async function startServer() {
   app.use('/api/admin/social-preview', socialPreviewRouter);
   app.use('/api/admin', adminRouter);
 
-  app.get('/api/seo-metadata', async (req, res) => {
-    try {
-      const content = await getLivePortfolioContent();
-      const settings = content.siteSettings || {};
-      const profile = content.profile || {};
-      const requestOrigin = `${req.protocol}://${req.get('host')}`;
-      const socialImage = await getPublishedSocialImageInfo(
-        settings.socialImageUrl,
-        settings.socialImageAlt,
-        requestOrigin,
-      );
-      res.setHeader('Cache-Control', 'no-store');
-      res.json({
-        success: true,
-        content: {
-          profile: {
-            name: profile.name,
-            title: profile.title,
-            bio: profile.bio,
-            avatar: profile.avatar,
-          },
-          siteSettings: {
-            siteName: settings.siteName,
-            siteTitle: settings.siteTitle,
-            metaDescription: settings.metaDescription,
-            faviconUrl: settings.faviconUrl,
-            socialImageUrl: settings.socialImageUrl,
-            socialPreviewUrl: socialImage?.fileId && socialImage.url
-              ? new URL(socialImage.url).pathname
-              : settings.socialImageUrl,
-            socialImageAlt: settings.socialImageAlt,
-            socialImageWidth: socialImage?.width,
-            socialImageHeight: socialImage?.height,
-            socialImageType: socialImage?.contentType,
-            openGraphTitle: settings.openGraphTitle,
-            openGraphDescription: settings.openGraphDescription,
-            canonicalUrl: settings.canonicalUrl,
-            twitterCard: settings.twitterCard,
-            twitterTitle: settings.twitterTitle,
-            twitterDescription: settings.twitterDescription,
-          },
-        },
-      });
-    } catch {
-      res.status(503).json({ success: false, error: 'Published SEO metadata could not be loaded.' });
-    }
-  });
+  app.get('/api/seo-metadata', handlePublishedSeoMetadata);
 
   app.get('/social-preview.:extension', async (req, res) => {
     try {
@@ -690,12 +645,13 @@ async function startServer() {
     app.get('*', async (req, res, next) => {
       try {
         let html = await fs.promises.readFile(path.join(distPath, 'index.html'), 'utf8');
-        const content = await getLivePortfolioContent() as Record<string, unknown>;
-        const siteSettings = content.siteSettings && typeof content.siteSettings === 'object'
-          ? content.siteSettings as Record<string, unknown>
+        const { content } = await loadPublishedSeoMetadata(`${req.protocol}://${req.get('host')}`);
+        const publishedContent = content as Record<string, unknown>;
+        const siteSettings = publishedContent.siteSettings && typeof publishedContent.siteSettings === 'object'
+          ? publishedContent.siteSettings as Record<string, unknown>
           : {};
-        const profile = content.profile && typeof content.profile === 'object'
-          ? content.profile as Record<string, unknown>
+        const profile = publishedContent.profile && typeof publishedContent.profile === 'object'
+          ? publishedContent.profile as Record<string, unknown>
           : {};
         const website = typeof profile.website === 'string' ? profile.website : '';
         const requestOrigin = `${req.protocol}://${req.get('host')}`;
@@ -716,23 +672,10 @@ async function startServer() {
             return '';
           }
         };
-        const socialImage = await getPublishedSocialImageInfo(
-          siteSettings.socialImageUrl,
-          siteSettings.socialImageAlt,
-          publicOrigin,
-        );
-        const socialImageUrl = socialImage?.url || resolvePublicImage(siteSettings.socialImageUrl);
         const canonicalUrl = resolvePublicImage(siteSettings.canonicalUrl) || (/^https?:\/\//i.test(website) ? website : '');
         html = renderSeoMetadataHtml(html, {
-          profile,
-          siteSettings: {
-            ...siteSettings,
-            canonicalUrl: canonicalUrl || website,
-            socialPreviewUrl: socialImageUrl,
-            socialImageWidth: socialImage?.width,
-            socialImageHeight: socialImage?.height,
-            socialImageType: socialImage?.contentType,
-          },
+          ...publishedContent,
+          siteSettings: { ...siteSettings, canonicalUrl: canonicalUrl || website },
         }, publicOrigin);
         res.setHeader('Cache-Control', 'no-cache');
         res.type('html').send(html);

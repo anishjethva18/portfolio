@@ -15,7 +15,6 @@ import { AdminDraftPreviewPage } from './components/apps/admin/AdminDraftPreview
 import { trackPortfolioAnalytics } from './utils/analytics';
 import { ConfirmDialogProvider } from './context/ConfirmDialogContext';
 import { applyConfiguredFavicon, applySeoMetadata } from './utils/seoMetadata';
-import { getCachedPublishedContent } from './utils/publishedPortfolioCache';
 import { Construction, ShieldCheck, Clock3, Sparkles } from 'lucide-react';
 import { getAdminShortcut, matchesAdminShortcut } from './utils/adminShortcut';
 
@@ -47,10 +46,19 @@ const OSMainContent: React.FC = () => {
     let active = true;
     let publishedAppLayoutApplied = false;
     applyConfiguredFavicon();
-    const cachedContent = getCachedPublishedContent();
-    if (cachedContent?.siteSettings) {
-      applySeoMetadata(cachedContent, window.location.href);
-    }
+    const refreshSeoMetadata = async () => {
+      try {
+        const response = await fetch('/api/seo-metadata', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Published SEO metadata could not be loaded (HTTP ${response.status}).`);
+        const payload = await response.json();
+        if (!payload.success || typeof payload.published !== 'boolean' || !payload.content) {
+          throw new Error('Published SEO metadata response is invalid.');
+        }
+        if (active) applySeoMetadata(payload.content, window.location.href);
+      } catch (error) {
+        if (active) console.error('[App] Published SEO metadata could not be loaded.', error);
+      }
+    };
     const refreshMaintenanceSettings = async () => {
       try {
         const response = await fetch('/api/portfolio-content', { cache: 'no-store' });
@@ -58,7 +66,6 @@ const OSMainContent: React.FC = () => {
         const payload = await response.json();
         if (!payload.success || !payload.content?.siteSettings) throw new Error('Published maintenance settings are missing.');
         if (active) {
-          applySeoMetadata(payload.content, window.location.href);
           if (!publishedAppLayoutApplied) {
             applyPublishedAppLayout(payload.content.siteSettings);
             publishedAppLayoutApplied = true;
@@ -77,12 +84,13 @@ const OSMainContent: React.FC = () => {
       }
     };
 
+    void refreshSeoMetadata();
     void refreshMaintenanceSettings();
     const handlePublishedContent = (event: Event) => {
       const content = (event as CustomEvent).detail;
       const settings = content?.siteSettings;
       if (!settings) return;
-      applySeoMetadata(content, window.location.href);
+      void refreshSeoMetadata();
       applyPublishedAppLayout(settings);
       setMaintenanceSettings({
         enabled: settings.maintenanceMode === true,
@@ -92,10 +100,12 @@ const OSMainContent: React.FC = () => {
     };
     window.addEventListener('portfolio-content-published', handlePublishedContent);
     window.addEventListener('portfolio-data-updated', refreshMaintenanceSettings);
+    window.addEventListener('portfolio-data-updated', refreshSeoMetadata);
     return () => {
       active = false;
       window.removeEventListener('portfolio-content-published', handlePublishedContent);
       window.removeEventListener('portfolio-data-updated', refreshMaintenanceSettings);
+      window.removeEventListener('portfolio-data-updated', refreshSeoMetadata);
     };
   }, [applyPublishedAppLayout]);
 

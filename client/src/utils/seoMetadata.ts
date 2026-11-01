@@ -38,14 +38,13 @@ export interface SeoMetadata {
   socialImageAlt: string;
   openGraphTitle: string;
   openGraphDescription: string;
-  twitterCard: 'summary_large_image';
+  twitterCard: 'summary' | 'summary_large_image';
   twitterTitle: string;
   twitterDescription: string;
 }
 
-const FALLBACK_TITLE = 'Developer Portfolio';
-const FALLBACK_DESCRIPTION = 'Interactive developer portfolio.';
-const FALLBACK_IMAGE = '/avatar.png';
+const FALLBACK_TITLE = 'SEO metadata not published';
+const FALLBACK_DESCRIPTION = 'No published SEO description is available.';
 const FALLBACK_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
 const loadedFavicons = new Set<string>();
 const faviconRequestIds = new WeakMap<HTMLLinkElement, number>();
@@ -61,21 +60,22 @@ export function resolvePublicUrl(value: unknown, baseUrl: string, fallback: stri
   try {
     base = new URL(baseUrl);
   } catch {
-    return 'https://example.invalid/avatar.png';
+    return '';
   }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
-    return 'https://example.invalid/avatar.png';
+    return '';
   }
-  const defaultUrl = new URL(FALLBACK_IMAGE, base).href;
-  let fallbackUrl = defaultUrl;
-  try {
-    const parsedFallback = new URL(fallback, base);
-    if (['http:', 'https:'].includes(parsedFallback.protocol) && !parsedFallback.username && !parsedFallback.password) {
-      fallbackUrl = parsedFallback.href;
+  const fallbackUrl = (() => {
+    if (!fallback) return '';
+    try {
+      const parsedFallback = new URL(fallback, base);
+      return ['http:', 'https:'].includes(parsedFallback.protocol) && !parsedFallback.username && !parsedFallback.password
+        ? parsedFallback.href
+        : '';
+    } catch {
+      return '';
     }
-  } catch {
-    fallbackUrl = defaultUrl;
-  }
+  })();
   if (typeof value !== 'string' || !value.trim()) return fallbackUrl;
   const candidate = value.trim();
   if (candidate.includes('\\')) return fallbackUrl;
@@ -107,9 +107,8 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
   const title = safeText(settings.siteTitle, titleFallback, 120);
   const description = safeText(settings.metaDescription, profileBio, 320);
   const canonicalUrl = resolvePublicUrl(settings.canonicalUrl, baseUrl, '/');
-  const faviconUrl = resolvePublicUrl(settings.faviconUrl, baseUrl, FALLBACK_IMAGE);
-  const profileAvatarUrl = resolvePublicUrl(profile.avatar, baseUrl, FALLBACK_IMAGE);
-  const socialImageUrl = resolvePublicUrl(settings.socialPreviewUrl ?? settings.socialImageUrl, baseUrl, profileAvatarUrl);
+  const faviconUrl = resolvePublicUrl(settings.faviconUrl, baseUrl, '');
+  const socialImageUrl = resolvePublicUrl(settings.socialPreviewUrl ?? settings.socialImageUrl, baseUrl, '');
   const socialImageWidth = typeof settings.socialImageWidth === 'number' && Number.isSafeInteger(settings.socialImageWidth) && settings.socialImageWidth > 0
     ? settings.socialImageWidth
     : null;
@@ -119,10 +118,11 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
   const socialImageType = typeof settings.socialImageType === 'string' && /^image\/[a-z0-9.+-]+$/i.test(settings.socialImageType)
     ? settings.socialImageType
     : '';
-  const socialImageAlt = safeText(settings.socialImageAlt, `${siteName} social sharing image`, 300);
+  const socialImageAlt = safeText(settings.socialImageAlt, socialImageUrl ? `${siteName} social sharing image` : '', 300);
   const openGraphTitle = safeText(settings.openGraphTitle, title, 120);
   const openGraphDescription = safeText(settings.openGraphDescription, description, 320);
-  const twitterCard = 'summary_large_image';
+  const configuredTwitterCard = safeText(settings.twitterCard, 'summary_large_image', 32);
+  const twitterCard = configuredTwitterCard === 'summary' ? 'summary' : 'summary_large_image';
 
   return {
     siteName,
@@ -351,7 +351,16 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
   for (const [attribute, key, value] of metaTags) {
     const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const selector = new RegExp(`<meta\\b(?=[^>]*\\b(?:name|property)=["']${escapedKey}["'])[^>]*>`, 'gi');
-    if (!value && ['og:image:width', 'og:image:height', 'og:image:type'].includes(key)) {
+    if (!value && [
+      'og:image',
+      'og:image:secure_url',
+      'og:image:alt',
+      'og:image:width',
+      'og:image:height',
+      'og:image:type',
+      'twitter:image',
+      'twitter:image:alt',
+    ].includes(key)) {
       output = replaceHeadTag(output, selector, '');
       continue;
     }

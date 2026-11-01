@@ -3,9 +3,13 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import cookieParser from 'cookie-parser';
 import express from 'express';
+import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { renderHomepageMetadata } from '../../client/edge-functions/seo-metadata';
 import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
+import { AdminContentDraftModel, AdminContentRevisionModel, SiteContentModel } from '../models';
 import { contentStudioRouter } from '../routes/contentStudio';
+import { contentStudioService } from '../services/contentStudioService';
+import { handlePublishedSeoMetadata } from '../services/seoMetadataService';
 
 const publishedContent = {
   profile: {
@@ -213,8 +217,10 @@ test('homepage metadata removes stale image dimensions when the published image 
 test('empty settings use safe absolute defaults and untrusted text is escaped', () => {
   const defaults = buildSeoMetadata({}, 'https://portfolio.example.test/path');
   assert.equal(defaults.canonicalUrl, 'https://portfolio.example.test/');
-  assert.equal(defaults.faviconUrl, 'https://portfolio.example.test/avatar.png');
-  assert.equal(defaults.socialImageUrl, 'https://portfolio.example.test/avatar.png');
+  assert.equal(defaults.title, 'SEO metadata not published');
+  assert.equal(defaults.description, 'No published SEO description is available.');
+  assert.equal(defaults.faviconUrl, '');
+  assert.equal(defaults.socialImageUrl, '');
   assert.equal(defaults.twitterCard, 'summary_large_image');
   assert.equal(buildSeoMetadata({
     siteSettings: {
@@ -222,12 +228,12 @@ test('empty settings use safe absolute defaults and untrusted text is escaped', 
       openGraphTitle: 'Open Graph fallback title',
       openGraphDescription: 'Open Graph fallback description.',
     },
-  }, 'https://portfolio.example.test/').twitterCard, 'summary_large_image');
+  }, 'https://portfolio.example.test/').twitterCard, 'summary');
   const invalidImageFallback = buildSeoMetadata(
     { profile: { avatar: 'javascript:alert(1)' }, siteSettings: { socialImageUrl: 'javascript:alert(2)' } },
     'https://portfolio.example.test/',
   );
-  assert.equal(invalidImageFallback.socialImageUrl, 'https://portfolio.example.test/avatar.png');
+  assert.equal(invalidImageFallback.socialImageUrl, '');
 
   const escaped = renderSeoMetadataHtml(
     '<!doctype html><html><head></head><body></body></html>',
@@ -243,7 +249,7 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     assert.equal(new URL(String(input)).pathname, '/api/seo-metadata');
-    return new Response(JSON.stringify({ success: true, content: publishedContent }), {
+    return new Response(JSON.stringify({ success: true, published: true, content: publishedContent }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -266,6 +272,132 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
     assert.match(html, /Published Open Graph description\./);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('Netlify does not replace failed published metadata with static HTML defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ success: false, error: 'Published SEO metadata is temporarily unavailable.' }),
+    { status: 503, headers: { 'Content-Type': 'application/json' } },
+  );
+  console.error = () => undefined;
+
+  try {
+    const response = await renderHomepageMetadata(
+      new Request('https://portfolio.example.test/'),
+      {
+        next: async () => new Response('<html><head><title>SEO metadata not published</title></head><body></body></html>', {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        }),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(await response.text(), 'Published SEO metadata is temporarily unavailable.');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
+test('initial HTML follows only the latest published SEO settings, never drafts', async () => {
+  await connectMongo();
+  const app = express();
+  app.get('/api/seo-metadata', handlePublishedSeoMetadata);
+  const server = app.listen(0);
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  const originalFetch = globalThis.fetch;
+  const seoContent = (title: string, imageUrl: string) => ({
+    profile: {
+      name: 'SEO Regression Owner',
+      title: 'Published Engineer',
+      bio: `Published bio for ${title}.`,
+      website: 'https://portfolio.example.test/',
+    },
+    siteSettings: {
+      siteName: 'Published SEO Regression Site',
+      siteTitle: title,
+      metaDescription: `Description for ${title}.`,
+      openGraphTitle: `Open Graph ${title}`,
+      openGraphDescription: `Open Graph description for ${title}.`,
+      canonicalUrl: 'https://portfolio.example.test/',
+      faviconUrl: '/published-favicon.png',
+      socialImageUrl: imageUrl,
+      socialImageAlt: `Preview for ${title}.`,
+      twitterCard: 'summary',
+      twitterTitle: `Twitter ${title}`,
+      twitterDescription: `Twitter description for ${title}.`,
+    },
+  });
+  const renderLiveHtml = async () => {
+    const response = await renderHomepageMetadata(
+      new Request('https://portfolio.example.test/'),
+      {
+        next: async () => new Response(
+          await readFile(new URL('../../client/index.html', import.meta.url), 'utf8'),
+          { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+        ),
+      },
+    );
+    return { response, html: await response.text() };
+  };
+
+  try {
+    await Promise.all([
+      SiteContentModel.deleteMany({ key: 'primary_portfolio_content' }),
+      AdminContentDraftModel.deleteMany({ key: 'primary_portfolio_content' }),
+      AdminContentRevisionModel.deleteMany({ key: 'primary_portfolio_content' }),
+    ]);
+
+    globalThis.fetch = async (input, init) => {
+      const target = new URL(String(input));
+      if (target.pathname === '/api/seo-metadata') {
+        return originalFetch(`http://127.0.0.1:${address.port}/api/seo-metadata`, init);
+      }
+      return originalFetch(input, init);
+    };
+
+    const unpublished = await renderLiveHtml();
+    assert.equal(unpublished.response.status, 200);
+    assert.match(unpublished.html, /SEO metadata not published/);
+    assert.match(unpublished.html, /No published SEO description is available\./);
+    assert.doesNotMatch(unpublished.html, /og:image|twitter:image|avatar\.png/);
+
+    const firstDraft = seoContent('First Published Title', 'https://images.example.test/first-preview.jpg');
+    await contentStudioService.saveDraft(firstDraft, 'seo-metadata-regression', {});
+    const beforeFirstPublish = await renderLiveHtml();
+    assert.doesNotMatch(beforeFirstPublish.html, /First Published Title|first-preview\.jpg/);
+    assert.match(beforeFirstPublish.html, /SEO metadata not published/);
+
+    await contentStudioService.publishDraft('seo-metadata-regression');
+    const firstPublished = await renderLiveHtml();
+    assert.match(firstPublished.html, /<title data-seo="title">First Published Title<\/title>/);
+    assert.match(firstPublished.html, /property="og:title" content="Open Graph First Published Title"/);
+    assert.match(firstPublished.html, /property="og:image" content="https:\/\/images\.example\.test\/first-preview\.jpg"/);
+    assert.match(firstPublished.html, /name="twitter:card" content="summary"/);
+    assert.match(firstPublished.html, /data-configured-favicon="https:\/\/portfolio\.example\.test\/published-favicon\.png"/);
+    assert.doesNotMatch(firstPublished.html, /Developer Portfolio|Interactive developer portfolio|avatar\.png/);
+
+    const secondDraft = seoContent('Second Published Title', 'https://images.example.test/second-preview.jpg');
+    await contentStudioService.saveDraft(secondDraft, 'seo-metadata-regression', firstDraft);
+    const beforeSecondPublish = await renderLiveHtml();
+    assert.match(beforeSecondPublish.html, /First Published Title/);
+    assert.match(beforeSecondPublish.html, /first-preview\.jpg/);
+    assert.doesNotMatch(beforeSecondPublish.html, /Second Published Title|second-preview\.jpg/);
+
+    await contentStudioService.publishDraft('seo-metadata-regression');
+    const secondPublished = await renderLiveHtml();
+    assert.match(secondPublished.html, /<title data-seo="title">Second Published Title<\/title>/);
+    assert.match(secondPublished.html, /property="og:image" content="https:\/\/images\.example\.test\/second-preview\.jpg"/);
+    assert.match(secondPublished.html, /name="twitter:title" content="Twitter Second Published Title"/);
+    assert.doesNotMatch(secondPublished.html, /First Published Title|first-preview\.jpg/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await disconnectMongo();
   }
 });
 

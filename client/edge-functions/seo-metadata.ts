@@ -6,6 +6,7 @@ type EdgeContext = {
 
 type SeoApiResponse = {
   success?: boolean;
+  published?: boolean;
   content?: SeoContent;
 };
 
@@ -16,7 +17,6 @@ export async function renderHomepageMetadata(request: Request, context: EdgeCont
   }
 
   const html = await response.text();
-  let content: SeoContent = {};
   try {
     const metadataResponse = await fetch(new URL('/api/seo-metadata', request.url), {
       headers: { Accept: 'application/json' },
@@ -29,21 +29,30 @@ export async function renderHomepageMetadata(request: Request, context: EdgeCont
     if (!payload.success || !payload.content || typeof payload.content !== 'object') {
       throw new Error('Published metadata endpoint returned an invalid response.');
     }
-    content = payload.content;
+    if (typeof payload.published !== 'boolean') {
+      throw new Error('Published metadata endpoint did not identify its publication state.');
+    }
+
+    const htmlWithMetadata = renderSeoMetadataHtml(html, payload.content, request.url);
+    const headers = new Headers(response.headers);
+    headers.delete('content-length');
+    headers.delete('content-encoding');
+    headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    return new Response(htmlWithMetadata, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   } catch (error) {
     console.error('[SEO] Published homepage metadata could not be loaded.', error);
+    return new Response('Published SEO metadata is temporarily unavailable.', {
+      status: 503,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+    });
   }
-
-  const htmlWithMetadata = renderSeoMetadataHtml(html, content, request.url);
-  const headers = new Headers(response.headers);
-  headers.delete('content-length');
-  headers.delete('content-encoding');
-  headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
-  return new Response(htmlWithMetadata, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
 }
 
 export default renderHomepageMetadata;
