@@ -17,7 +17,7 @@ existing Netlify API proxy target and the file-storage and PWA limitations.
 | React + Vite frontend | `client/` | Windows-style portfolio UI and browser-side API calls |
 | Express + TypeScript backend | `server/` | REST API, admin/authentication, contact/email, search, and file handling |
 | MongoDB models/configuration | `server/models/`, `server/config/dbConfig.ts` | Persistent portfolio content, admin sessions, contacts, analytics, metadata, and other collections |
-| Netlify configuration | `client/netlify.toml` | Frontend build, SEO edge function, `/api/*` proxy, and single-page-app fallback |
+| Netlify configuration | `netlify.toml` | Frontend build, SEO edge function, `/api/*` proxy, and single-page-app fallback |
 | Render deployment configuration | Render dashboard | Backend Web Service; no `render.yaml` was found |
 
 The manifests declare React 19 and Vite 6 for the client and Express 4,
@@ -55,7 +55,7 @@ flowchart LR
 2. The client sends requests to relative paths such as `/api/auth/login`,
    `/api/contact`, and `/api/portfolio-content`; no client API-base environment
    variable was found in the frontend source.
-3. The first `/api/*` redirect in `client/netlify.toml` proxies those requests to
+3. The first `/api/*` redirect in `netlify.toml` proxies those requests to
    `https://portfolio-ub24.onrender.com/api/:splat`.
 4. The Express service receives the request, checks input/authentication as
    applicable, and reads or writes records in MongoDB using Mongoose.
@@ -65,7 +65,7 @@ flowchart LR
 
 **Before production:** confirm that
 `https://portfolio-ub24.onrender.com` is the intended live Render service. If
-the Render service has a different URL, the `/api/*` target in `client/netlify.toml`
+the Render service has a different URL, the `/api/*` target in `netlify.toml`
 must be updated and Netlify redeployed. This guide deliberately does not edit
 that configuration.
 
@@ -251,7 +251,7 @@ the expected pattern for Render.
 
 ## 5. Deploy the frontend on Netlify
 
-`client/netlify.toml` defines the client build, publish directory, and SEO edge-function directory:
+`netlify.toml` at the repository root defines the client build, publish directory, and SEO edge-function directory:
 
 ```text
 Build command: npm ci --prefix client && npm --prefix client run build
@@ -262,9 +262,9 @@ Base directory: repository root; Package directory: client
 1. In Netlify, add a site from the same GitHub repository and select the
    production branch.
 2. Keep the base directory at the repository root and set the Package directory
-   to `client` so Netlify discovers `client/netlify.toml`. The function source is
+   to `client`. Netlify searches the package directory, base directory, then repository root for configuration; keep the root `netlify.toml`. The function source is
    `client/edge-functions/seo-metadata.ts`.
-3. Let `client/netlify.toml` supply the build command and publish directory, or make
+3. Let `netlify.toml` supply the build command and publish directory, or make
    the UI values match them exactly.
 4. Deploy and inspect the Netlify build log. A successful build should publish
    `client/dist`.
@@ -273,7 +273,7 @@ Base directory: repository root; Package directory: client
 
 - Frontend requests use relative `/api/...` URLs. The inspected frontend does
   not read a `VITE_API_URL` or another Vite API-base variable.
-- `client/netlify.toml` currently proxies `/api/*` to
+- `netlify.toml` currently proxies `/api/*` to
   `https://portfolio-ub24.onrender.com/api/:splat`, then falls back to
   `/index.html` for SPA routes. If your Render service URL differs, update that
   API target in the project configuration and redeploy Netlify. Do not try to
@@ -283,7 +283,7 @@ Base directory: repository root; Package directory: client
   server secrets in a `VITE_*` variable.
 - No required Netlify environment variable was confirmed in the inspected
   client code/configuration. The backend URL is presently configured in
-  `client/netlify.toml`, not through a client env variable.
+  `netlify.toml`, not through a client env variable.
 
 ### Domains, HTTPS, and SPA routing
 
@@ -370,7 +370,7 @@ that conclusion.
 
 | Variable | Purpose | Secret? | Example |
 | --- | --- | --- | --- |
-| No required variable confirmed | The frontend calls relative `/api/...` paths; the API proxy is configured in `client/netlify.toml`. | — | Do not invent a `VITE_API_URL` unless the frontend is changed to read it. |
+| No required variable confirmed | The frontend calls relative `/api/...` paths; the API proxy is configured in `netlify.toml`. | — | Do not invent a `VITE_API_URL` unless the frontend is changed to read it. |
 
 ### MongoDB Atlas settings
 
@@ -605,7 +605,7 @@ currently provides a PWA.
 
 - [ ] Netlify build publishes `client/dist` without errors.
 - [ ] Home page and direct refresh of a nested frontend route render correctly.
-- [ ] `client/netlify.toml` API rewrite points to the current Render service.
+- [ ] `netlify.toml` API rewrite points to the current Render service.
 - [ ] Browser requests to `/api/portfolio-content` and other public API
       endpoints reach Render; no CORS, mixed-content, or incorrect-host errors
       appear in the browser console/network panel.
@@ -653,7 +653,7 @@ currently provides a PWA.
 
 | Error or symptom | Likely cause | How to verify | Safe fix |
 | --- | --- | --- | --- |
-| Netlify says package file or build command is missing | Wrong repository, base directory, or package directory | Check repository tree and Netlify build log; project root contains `client/`, `server/`, and `client/netlify.toml` | Use the project root as Netlify base and set Package directory to `client` so Netlify loads `client/netlify.toml` |
+| Netlify says package file or build command is missing | Wrong repository, base directory, or package directory | Check repository tree and Netlify build log; project root contains `client/`, `server/`, and root `netlify.toml` | Use the project root as Netlify base and set Package directory to `client`; ensure the root config is included in the deployed branch |
 | Render cannot find package/scripts or start command exits | Render root directory or commands do not match `server/package.json` | Inspect Render service root and build/start logs | Set root to `server`, build `npm ci && npm run build`, start `npm start` |
 | Render build cannot find Node package or TypeScript build tool | Dependency install failed, wrong Node version, or lockfile mismatch | Read the first npm/esbuild/TypeScript error in build logs | Run `npm ci` in `server/` locally, check dependency engine requirements, and use the supported Node runtime; do not bypass install failures |
 | Server exits with missing production variables | `NODE_ENV=production` but Atlas, HTTPS `APP_URL`, admin email, or a supported mail provider is missing | Read startup validation error in Render logs | Add the exact missing server-side variables in Render and redeploy |
@@ -661,8 +661,8 @@ currently provides a PWA.
 | MongoDB server-selection timeout / Atlas IP error | Render egress is not allowed in Atlas Network Access or cluster is unavailable | Compare Render outbound IP guidance, Atlas access-list entries, and Atlas cluster status | Allow only the required Render egress address/range when available; do not leave `0.0.0.0/0` open as a permanent shortcut |
 | `/api/health` works but DB appears unhealthy | Health endpoint checks the API process only; DB admin health requires auth | Sign in and inspect `/api/health/admin` or `/api/health/db`; review Render DB connection logs | Fix the Atlas URI/network/permissions and restart; do not interpret public health 200 as a successful database ping |
 | Browser reports CORS failure or login cookie is not retained | Netlify origin missing from CORS settings, direct cross-origin API call, or incorrect HTTPS/origin configuration | Browser DevTools → Network: inspect request URL, `Origin`, response CORS headers, and cookie attributes (never copy cookie values) | Use the same-origin Netlify `/api` proxy; set exact `APP_URL` and comma-separated `CORS_ALLOWED_ORIGINS`; keep HTTPS |
-| Frontend returns 404 on refresh of an app route | SPA fallback missing or overwritten by dashboard redirect settings | Open the nested route directly; inspect Netlify deploy summary and redirects | Restore the `/* -> /index.html` rule from `client/netlify.toml` after the `/api/*` proxy rule |
-| API returns 404 or browser calls the wrong backend | The hard-coded Render target in `client/netlify.toml` is stale or points to a different service | Inspect the browser Network request and deployed Netlify redirect configuration | Set the `/api/*` target to the actual Render service URL and redeploy Netlify |
+| Frontend returns 404 on refresh of an app route | SPA fallback missing or overwritten by dashboard redirect settings | Open the nested route directly; inspect Netlify deploy summary and redirects | Restore the `/* -> /index.html` rule from root `netlify.toml` after the `/api/*` proxy rule |
+| API returns 404 or browser calls the wrong backend | The hard-coded Render target in root `netlify.toml` is stale or missing from the deployed branch | Inspect the browser Network request and deployed Netlify redirect configuration | Set the `/api/*` target to the actual Render service URL and redeploy Netlify |
 | Contact form saves but email does not arrive | Mock provider selected, incomplete credentials, SMTP egress blocked, or sender unverified | Inspect service startup provider label, contact result/admin history, Render logs, and provider dashboard | Configure one complete supported provider; verify sender; prefer Resend HTTPS API where SMTP is restricted |
 | SMTP timeout, DNS error, or connection refused | Wrong host/port/TLS, provider/network restriction, DNS issue, or blocked SMTP egress | Check the exact error code in Render logs and provider SMTP settings; test only from an authorized environment | Correct host/port/TLS and credentials; check Render's current SMTP policy; switch to a supported HTTPS mail provider if needed |
 | Resend reports sender/domain error or HTTP 401 | Wrong API key or unverified sender/from address | Check Resend API key status and verified domains; inspect redacted provider error | Rotate an exposed/invalid key and use a sender verified in the same Resend account |

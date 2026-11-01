@@ -43,8 +43,6 @@ export interface SeoMetadata {
   twitterDescription: string;
 }
 
-const FALLBACK_TITLE = 'SEO metadata not published';
-const FALLBACK_DESCRIPTION = 'No published SEO description is available.';
 const FALLBACK_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
 const loadedFavicons = new Set<string>();
 const faviconRequestIds = new WeakMap<HTMLLinkElement, number>();
@@ -99,14 +97,14 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
   const settings = content.siteSettings || {};
   const profileName = safeText(profile.name, '', 160);
   const profileTitle = safeText(profile.title, '', 160);
-  const profileBio = safeText(profile.bio, FALLBACK_DESCRIPTION, 320);
-  const siteName = safeText(settings.siteName, profileName || FALLBACK_TITLE, 160);
+  const profileBio = safeText(profile.bio, '', 320);
+  const siteName = safeText(settings.siteName, profileName, 160);
   const titleFallback = profileName
     ? `${profileName}${profileTitle ? ` | ${profileTitle}` : ''}`
-    : FALLBACK_TITLE;
+    : '';
   const title = safeText(settings.siteTitle, titleFallback, 120);
   const description = safeText(settings.metaDescription, profileBio, 320);
-  const canonicalUrl = resolvePublicUrl(settings.canonicalUrl, baseUrl, '/');
+  const canonicalUrl = resolvePublicUrl(settings.canonicalUrl, baseUrl, '');
   const faviconUrl = resolvePublicUrl(settings.faviconUrl, baseUrl, '');
   const socialImageUrl = resolvePublicUrl(settings.socialPreviewUrl ?? settings.socialImageUrl, baseUrl, '');
   const socialImageWidth = typeof settings.socialImageWidth === 'number' && Number.isSafeInteger(settings.socialImageWidth) && settings.socialImageWidth > 0
@@ -402,5 +400,20 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
   };
   const jsonLdHtml = `<script id="website-jsonld" type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>`;
   output = replaceHeadTag(output, /<script\b(?=[^>]*\bid=["']website-jsonld["'])[^>]*>[\s\S]*?<\/script>/gi, jsonLdHtml);
+  return output;
+}
+
+export function stripSeoMetadataHtml(html: string): string {
+  let output = html
+    .replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, '')
+    .replace(/<meta\b(?=[^>]*\bname=["'](?:description|twitter:[^"']+)["'])[^>]*>/gi, '')
+    .replace(/<meta\b(?=[^>]*\bproperty=["']og:[^"']+["'])[^>]*>/gi, '')
+    .replace(/<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/gi, '')
+    .replace(/<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/gi, '')
+    .replace(/<script\b(?=[^>]*\bid=["']website-jsonld["'])[^>]*>[\s\S]*?<\/script>/gi, '');
+  output = output.replace(
+    /(<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*?)\s+data-configured-favicon=["'][^"']*["']/gi,
+    '$1',
+  );
   return output;
 }

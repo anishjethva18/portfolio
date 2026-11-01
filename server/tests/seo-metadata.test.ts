@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { renderHomepageMetadata } from '../../client/edge-functions/seo-metadata';
-import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
+import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml, stripSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
 import { AdminContentDraftModel, AdminContentRevisionModel, SiteContentModel } from '../models';
 import { contentStudioRouter } from '../routes/contentStudio';
 import { contentStudioService } from '../services/contentStudioService';
@@ -216,9 +216,9 @@ test('homepage metadata removes stale image dimensions when the published image 
 
 test('empty settings use safe absolute defaults and untrusted text is escaped', () => {
   const defaults = buildSeoMetadata({}, 'https://portfolio.example.test/path');
-  assert.equal(defaults.canonicalUrl, 'https://portfolio.example.test/');
-  assert.equal(defaults.title, 'SEO metadata not published');
-  assert.equal(defaults.description, 'No published SEO description is available.');
+  assert.equal(defaults.canonicalUrl, '');
+  assert.equal(defaults.title, '');
+  assert.equal(defaults.description, '');
   assert.equal(defaults.faviconUrl, '');
   assert.equal(defaults.socialImageUrl, '');
   assert.equal(defaults.twitterCard, 'summary_large_image');
@@ -243,6 +243,29 @@ test('empty settings use safe absolute defaults and untrusted text is escaped', 
   assert.doesNotMatch(escaped, /<script>alert\(1\)<\/script>/);
   assert.match(escaped, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(escaped, /&quot; onload=&quot;alert\(1\)/);
+});
+
+test('unpublished SEO produces clean HTML without title, social metadata, images, or structured data', async () => {
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  const pollutedHtml = html.replace(
+    '</head>',
+    `<title>SEO metadata not published</title>
+    <meta name="description" content="No published SEO description is available." />
+    <meta property="og:title" content="SEO metadata not published" />
+    <meta property="og:description" content="No published SEO description is available." />
+    <meta property="og:image" content="/avatar.png" />
+    <meta name="twitter:title" content="SEO metadata not published" />
+    <meta name="twitter:description" content="No published SEO description is available." />
+    <meta name="twitter:image" content="/avatar.png" />
+    <link rel="canonical" href="/" />
+    <script id="website-jsonld" type="application/ld+json">{}</script>
+    </head>`,
+  );
+  const cleaned = stripSeoMetadataHtml(pollutedHtml);
+
+  assert.doesNotMatch(cleaned, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld|rel="canonical"/);
+  assert.doesNotMatch(cleaned, /SEO metadata not published|No published SEO description is available|avatar\.png/);
+  assert.match(cleaned, /rel="icon" href="data:image\/svg\+xml,/);
 });
 
 test('Netlify homepage edge handler uses the public published metadata endpoint', async () => {
@@ -275,12 +298,43 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
   }
 });
 
+test('Netlify returns clean HTML when the published SEO record does not exist', async () => {
+  const originalFetch = globalThis.fetch;
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    success: true,
+    published: false,
+    content: {},
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const response = await renderHomepageMetadata(
+      new Request('https://portfolio.example.test/'),
+      {
+        next: async () => new Response(html, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        }),
+      },
+    );
+    const rendered = await response.text();
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(rendered, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld/);
+    assert.doesNotMatch(rendered, /SEO metadata not published|No published SEO description is available|avatar\.png/);
+    assert.match(rendered, /rel="icon" href="data:image\/svg\+xml,/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Netlify does not replace failed published metadata with static HTML defaults', async () => {
   const originalFetch = globalThis.fetch;
   const originalError = console.error;
   globalThis.fetch = async () => new Response(
-    JSON.stringify({ success: false, error: 'Published SEO metadata is temporarily unavailable.' }),
-    { status: 503, headers: { 'Content-Type': 'application/json' } },
+    '<!doctype html><title>Page not found</title>',
+    { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
   );
   console.error = () => undefined;
 
@@ -362,15 +416,14 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
 
     const unpublished = await renderLiveHtml();
     assert.equal(unpublished.response.status, 200);
-    assert.match(unpublished.html, /SEO metadata not published/);
-    assert.match(unpublished.html, /No published SEO description is available\./);
-    assert.doesNotMatch(unpublished.html, /og:image|twitter:image|avatar\.png/);
+    assert.doesNotMatch(unpublished.html, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld/);
+    assert.doesNotMatch(unpublished.html, /SEO metadata not published|No published SEO description is available|avatar\.png/);
 
     const firstDraft = seoContent('First Published Title', 'https://images.example.test/first-preview.jpg');
     await contentStudioService.saveDraft(firstDraft, 'seo-metadata-regression', {});
     const beforeFirstPublish = await renderLiveHtml();
     assert.doesNotMatch(beforeFirstPublish.html, /First Published Title|first-preview\.jpg/);
-    assert.match(beforeFirstPublish.html, /SEO metadata not published/);
+    assert.doesNotMatch(beforeFirstPublish.html, /<title\b|property="og:|name="twitter:/);
 
     await contentStudioService.publishDraft('seo-metadata-regression');
     const firstPublished = await renderLiveHtml();
@@ -402,7 +455,7 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
 });
 
 test('Netlify proxies only generated social formats and preserves API and SEO routing', async () => {
-  const config = await readFile(new URL('../../client/netlify.toml', import.meta.url), 'utf8');
+  const config = await readFile(new URL('../../netlify.toml', import.meta.url), 'utf8');
   const expectedFormats = ['jpg', 'png', 'webp'];
   const socialRedirects = config.split('[[redirects]]').slice(1);
   const socialBlocks = socialRedirects.filter((block) => block.includes('from = "/social-preview.'));
@@ -419,9 +472,13 @@ test('Netlify proxies only generated social formats and preserves API and SEO ro
   }
 
   assert.equal([...config.matchAll(/from = "\/social-preview\.[a-z]+"/g)].length, expectedFormats.length);
+  const apiProxy = config.match(/from = "\/api\/\*"\s+to = "([^"]+)"\s+status = 200\s+force = true/);
+  assert.ok(apiProxy, 'Netlify must configure a force rewrite for every /api/* request');
+  const seoApiTarget = apiProxy[1].replace(':splat', 'seo-metadata');
+  assert.equal(new URL(seoApiTarget).origin, 'https://portfolio-ub24.onrender.com');
+  assert.equal(new URL(seoApiTarget).pathname, '/api/seo-metadata');
   assert.match(config, /edge_functions = "client\/edge-functions"/);
   assert.match(config, /function = "seo-metadata"\s+path = "\/"/);
-  assert.match(config, /from = "\/api\/\*"\s+to = "https:\/\/portfolio-ub24\.onrender\.com\/api\/:splat"\s+status = 200\s+force = true/);
   assert.ok(config.indexOf('from = "/api/*"') < config.indexOf('from = "/*"'));
 });
 

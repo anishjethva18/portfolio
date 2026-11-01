@@ -1,4 +1,4 @@
-import { renderSeoMetadataHtml, type SeoContent } from '../src/utils/seoMetadata.ts';
+import { renderSeoMetadataHtml, stripSeoMetadataHtml, type SeoContent } from '../src/utils/seoMetadata.ts';
 
 type EdgeContext = {
   next: () => Promise<Response>;
@@ -33,7 +33,9 @@ export async function renderHomepageMetadata(request: Request, context: EdgeCont
       throw new Error('Published metadata endpoint did not identify its publication state.');
     }
 
-    const htmlWithMetadata = renderSeoMetadataHtml(html, payload.content, request.url);
+    const htmlWithMetadata = payload.published
+      ? renderSeoMetadataHtml(html, payload.content, request.url)
+      : stripSeoMetadataHtml(html);
     const headers = new Headers(response.headers);
     headers.delete('content-length');
     headers.delete('content-encoding');

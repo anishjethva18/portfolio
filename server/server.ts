@@ -38,7 +38,7 @@ import { fileService } from './services/fileService';
 import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
 import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
-import { renderSeoMetadataHtml } from '../client/src/utils/seoMetadata';
+import { renderSeoMetadataHtml, stripSeoMetadataHtml } from '../client/src/utils/seoMetadata';
 import { handlePublishedSeoMetadata, loadPublishedSeoMetadata } from './services/seoMetadataService';
 import {
   buildContentSecurityPolicyDirectives,
@@ -645,7 +645,12 @@ async function startServer() {
     app.get('*', async (req, res, next) => {
       try {
         let html = await fs.promises.readFile(path.join(distPath, 'index.html'), 'utf8');
-        const { content } = await loadPublishedSeoMetadata(`${req.protocol}://${req.get('host')}`);
+        const { content, published } = await loadPublishedSeoMetadata(`${req.protocol}://${req.get('host')}`);
+        if (!published) {
+          res.setHeader('Cache-Control', 'no-cache');
+          res.type('html').send(stripSeoMetadataHtml(html));
+          return;
+        }
         const publishedContent = content as Record<string, unknown>;
         const siteSettings = publishedContent.siteSettings && typeof publishedContent.siteSettings === 'object'
           ? publishedContent.siteSettings as Record<string, unknown>
