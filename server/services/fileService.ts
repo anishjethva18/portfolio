@@ -19,7 +19,7 @@ export function canAccessStoredFile(
 
 export const ALLOWED_EXTENSIONS = new Set([
   // Images
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'tif', 'tiff', 'heic', 'heif', 'avif',
   // Documents & Text
   'pdf', 'doc', 'docx', 'txt', 'md', 'json', 'csv', 'xml', 'log',
   // Audio & Video

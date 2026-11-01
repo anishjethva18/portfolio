@@ -13,4 +13,5 @@ export * from './AdminContentDraft';
 export * from './AdminProjectDraft';
 export * from './AdminContentRevision';
 export * from './AdminAuditLog';
+export * from './SocialPreviewAsset';
 export * from './RateLimitBucket';

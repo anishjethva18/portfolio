@@ -48,7 +48,10 @@ import {
   Check,
   Eye,
   EyeOff,
+  UploadCloud,
+  RefreshCw,
 } from 'lucide-react';
+import { getPortfolioMediaId } from '../../utils/portfolioMedia';
 
 interface PortfolioManagementProps {
   onSaveSuccess?: () => void;
@@ -63,6 +66,43 @@ interface AdminDraftSaveDetail {
 }
 
 const clonePortfolioContent = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+interface SocialPreviewVariant {
+  key: string;
+  label: string;
+  fileId: string;
+  url: string;
+  width: number;
+  height: number;
+  format: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+interface SocialPreviewAsset {
+  original: {
+    id: string;
+    name: string;
+    url: string;
+    contentType: string;
+    format: string;
+    width: number;
+    height: number;
+    encodedWidth?: number;
+    encodedHeight?: number;
+    sizeBytes: number;
+    orientation?: number;
+    animated?: boolean;
+  };
+  variants: SocialPreviewVariant[];
+  defaultVariant?: SocialPreviewVariant | null;
+}
+
+function formatImageSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 const APPEARANCE_APPS = [...APPS_LIST].sort((left, right) => {
   if (left.id === 'admin') return -1;
@@ -98,6 +138,11 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
   const [savedDraftContent, setSavedDraftContent] = useState<any>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadingMediaField, setUploadingMediaField] = useState<'avatar' | 'resumeUrl' | 'socialImageUrl' | 'faviconUrl' | 'emailBrandImageUrl' | null>(null);
+  const [socialPreviewAsset, setSocialPreviewAsset] = useState<SocialPreviewAsset | null>(null);
+  const [socialImageProcessing, setSocialImageProcessing] = useState(false);
+  const [socialImageError, setSocialImageError] = useState('');
+  const [socialImageDragOver, setSocialImageDragOver] = useState(false);
+  const socialImageInputRef = useRef<HTMLInputElement>(null);
   const [unavailableCertificationPreviews, setUnavailableCertificationPreviews] = useState<Record<string, boolean>>({});
   const [wallpaperLocalPreviewUrl, setWallpaperLocalPreviewUrl] = useState<string | null>(null);
   const [wallpaperPreviewError, setWallpaperPreviewError] = useState(false);
@@ -171,6 +216,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       twitterDescription: '',
       portfolioVersion: '1.0.0',
       socialImageUrl: '',
+      socialImageAlt: '',
       faviconUrl: '',
       emailBrandImageUrl: '',
       emailFaviconEnabled: true,
@@ -286,6 +332,27 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
       setContent(clonePortfolioContent(normalizedDraft));
       setSavedDraftContent(clonePortfolioContent(normalizedDraft));
       setPublishedContent(data.published);
+      const currentSocialImageId = typeof draftSettings.socialImageUrl === 'string'
+        ? getPortfolioMediaId(draftSettings.socialImageUrl)
+        : undefined;
+      if (currentSocialImageId) {
+        try {
+          const assetResponse = await apiFetch(`/api/admin/social-preview/asset/${encodeURIComponent(currentSocialImageId)}`, { cache: 'no-store' });
+          const assetData = await assetResponse.json();
+          if (assetResponse.ok && assetData.success) {
+            setSocialPreviewAsset(assetData as SocialPreviewAsset);
+            setSocialImageError('');
+          } else if (assetResponse.status !== 404) {
+            setSocialImageError(assetData.error || 'Generated social image variants could not be loaded.');
+          } else {
+            setSocialPreviewAsset(null);
+          }
+        } catch (error) {
+          setSocialImageError(error instanceof Error ? error.message : 'Generated social image variants could not be loaded.');
+        }
+      } else {
+        setSocialPreviewAsset(null);
+      }
       contentLoadedRef.current = true;
       updateHiddenAppIds(data.draft.siteSettings?.disabledApps || []);
     } catch (err: any) {
@@ -489,6 +556,40 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     } finally {
       setUploadingMediaField(null);
       setUploadingMedia(false);
+    }
+  };
+
+  const handleUploadSocialImage = async (file: File) => {
+    setSocialImageProcessing(true);
+    setSocialImageError('');
+    setUploadingMedia(true);
+    setUploadingMediaField('socialImageUrl');
+    setSuccessMessage(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiFetch('/api/admin/social-preview/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.defaultVariant?.url || !Array.isArray(data.variants)) {
+        throw new Error(data.error || 'The social image could not be processed.');
+      }
+      const asset = data as SocialPreviewAsset;
+      setSocialPreviewAsset(asset);
+      updateSiteSettings('socialImageUrl', data.defaultVariant.url);
+      if (!content.siteSettings?.socialImageAlt?.trim()) {
+        updateSiteSettings('socialImageAlt', file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+      }
+      setSuccessMessage(`${file.name} was preserved and optimized into ${data.variants.length} social preview variants. Save draft, then publish to make the new image public.`);
+      window.dispatchEvent(new CustomEvent('portfolio-media-changed'));
+    } catch (error) {
+      setSocialImageError(error instanceof Error ? error.message : 'The social image could not be processed.');
+    } finally {
+      setUploadingMediaField(null);
+      setUploadingMedia(false);
+      setSocialImageProcessing(false);
     }
   };
 
@@ -1637,12 +1738,91 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2 text-xs font-semibold text-slate-700">
                   <label htmlFor="social-preview-url">Social preview image</label>
-                  <input id="social-preview-url" value={content.siteSettings?.socialImageUrl || ''} maxLength={2048} onChange={(event) => updateSiteSettings('socialImageUrl', event.target.value)} placeholder="/api/portfolio-media/… or https://…" className="block h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
-                  <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700">
-                    <ImageIcon className="h-4 w-4" />
-                    {uploadingMediaField === 'socialImageUrl' ? 'Uploading image…' : 'Upload social image'}
-                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={uploadingMedia || saving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleUploadMedia(file, 'socialImageUrl'); event.currentTarget.value = ''; }} className="sr-only" />
-                  </label>
+                  <div
+                    onDragOver={(event) => { event.preventDefault(); setSocialImageDragOver(true); }}
+                    onDragLeave={() => setSocialImageDragOver(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setSocialImageDragOver(false);
+                      const file = event.dataTransfer.files[0];
+                      if (file) void handleUploadSocialImage(file);
+                    }}
+                    className={`rounded-xl border border-dashed p-4 transition-colors ${socialImageDragOver ? 'border-sky-500 bg-sky-50' : 'border-slate-300 bg-slate-50'}`}
+                  >
+                    <input
+                      ref={socialImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/tiff,image/heic,image/heif,image/avif"
+                      disabled={uploadingMedia || saving}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = '';
+                        if (file) void handleUploadSocialImage(file);
+                      }}
+                      className="sr-only"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        {socialImageProcessing
+                          ? <RefreshCw className="h-4 w-4 animate-spin text-sky-600" />
+                          : <UploadCloud className="h-4 w-4 text-sky-600" />}
+                        <span className="text-[11px] font-semibold text-slate-700">
+                          {socialImageProcessing ? 'Inspecting and generating variants…' : 'Drop any supported raster image here'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => socialImageInputRef.current?.click()}
+                        disabled={uploadingMedia || saving}
+                        className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-semibold text-slate-600 hover:border-sky-300 hover:text-sky-700 disabled:opacity-50"
+                      >
+                        <ImageIcon className="h-4 w-4" />Choose image
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] font-normal text-slate-500">JPEG, PNG, WebP, GIF, TIFF and supported HEIF/AVIF. Up to 10 MB and 120 megapixels. Source is preserved; no upload aspect-ratio requirement.</p>
+                    {socialImageError && <p role="alert" className="mt-2 text-[10px] font-medium text-rose-700">{socialImageError}</p>}
+                    {socialPreviewAsset && <>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
+                        <div className="grid aspect-[1.91/1] place-items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                          <img src={socialPreviewAsset.original.url} alt={`Original image: ${socialPreviewAsset.original.name}`} className="max-h-full max-w-full object-contain" />
+                        </div>
+                        <div className="min-w-0 self-center text-[10px] font-normal text-slate-600">
+                          <p className="truncate font-semibold text-slate-800">{socialPreviewAsset.original.name}</p>
+                          <p className="mt-1">{socialPreviewAsset.original.width} × {socialPreviewAsset.original.height} · {socialPreviewAsset.original.format.toUpperCase()} · {formatImageSize(socialPreviewAsset.original.sizeBytes)}</p>
+                          {socialPreviewAsset.original.orientation && socialPreviewAsset.original.orientation !== 1 && <p className="mt-1 text-sky-700">EXIF orientation {socialPreviewAsset.original.orientation} applied to previews; original preserved.</p>}
+                          {socialPreviewAsset.original.animated && <p className="mt-1">Animated source retained; static preview variants use its first frame.</p>}
+                        </div>
+                      </div>
+                      <p className="mt-4 text-[10px] font-semibold text-slate-700">Generated variants · choose the version used for sharing</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {socialPreviewAsset.variants.map((variant) => {
+                          const selected = content.siteSettings?.socialImageUrl === variant.url;
+                          return <button
+                            key={variant.key}
+                            type="button"
+                            onClick={() => updateSiteSettings('socialImageUrl', variant.url)}
+                            aria-pressed={selected}
+                            className={`flex min-w-0 items-center gap-2 rounded-lg border p-2 text-left transition-colors ${selected ? 'border-sky-400 bg-sky-50' : 'border-slate-200 bg-white hover:border-sky-200'}`}
+                          >
+                            <span className="grid h-12 w-16 shrink-0 place-items-center overflow-hidden rounded border border-slate-200 bg-slate-100">
+                              <img src={variant.url} alt="" className="max-h-full max-w-full object-contain" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-[9px] font-semibold text-slate-700">{variant.label}</span>
+                              <span className="mt-1 block text-[9px] font-normal text-slate-500">{variant.width} × {variant.height} · {variant.format.toUpperCase()} · {formatImageSize(variant.sizeBytes)}</span>
+                            </span>
+                          </button>;
+                        })}
+                      </div>
+                    </>}
+                  </div>
+                  <label htmlFor="social-preview-url" className="block pt-1 text-[10px] font-medium text-slate-500">Or use an existing public image URL</label>
+                  <div className="flex gap-2">
+                    <input id="social-preview-url" value={content.siteSettings?.socialImageUrl || ''} maxLength={2048} onChange={(event) => { setSocialPreviewAsset(null); updateSiteSettings('socialImageUrl', event.target.value); }} placeholder="/api/portfolio-media/… or https://…" className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+                    {content.siteSettings?.socialImageUrl && <button type="button" onClick={() => { updateSiteSettings('socialImageUrl', ''); setSocialPreviewAsset(null); }} className="min-h-10 rounded-lg border border-rose-200 bg-white px-3 text-[10px] font-semibold text-rose-700 hover:bg-rose-50">Remove</button>}
+                  </div>
+                  <label htmlFor="social-image-alt" className="block pt-2 text-[10px] font-medium text-slate-500">Image description (Open Graph and X accessibility text)</label>
+                  <input id="social-image-alt" value={content.siteSettings?.socialImageAlt || ''} maxLength={300} onChange={(event) => updateSiteSettings('socialImageAlt', event.target.value)} placeholder="Describe what the social image shows" className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-[10px] font-normal text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
                 </div>
                 <div className="space-y-2 text-xs font-semibold text-slate-700">
                   <label htmlFor="favicon-url">Website favicon</label>
@@ -1724,16 +1904,17 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
                   <span className="max-w-24 text-[10px] font-semibold text-slate-600">Browser tab icon</span>
                 </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,.8fr)] sm:items-center">
-                <div className="min-w-0">
-                  <p className="truncate text-[10px] text-emerald-700">{content.siteSettings?.canonicalUrl || window.location.origin}</p>
-                  <p className="mt-1 truncate text-base font-semibold text-sky-700">{content.siteSettings?.siteTitle || 'Portfolio title'}</p>
-                  <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{content.siteSettings?.metaDescription || 'Your search and social description will appear here.'}</p>
-                </div>
+              <div className="mx-auto w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 {content.siteSettings?.socialImageUrl && ((content.siteSettings.socialImageUrl.startsWith('/') && !content.siteSettings.socialImageUrl.startsWith('//')) || /^https:\/\//i.test(content.siteSettings.socialImageUrl))
-                  ? <div className="aspect-[1.91/1] w-full overflow-hidden rounded-lg border border-slate-200 bg-white p-2"><img src={content.siteSettings.socialImageUrl} alt="Social sharing image preview" className="block h-full w-full object-contain" /></div>
-                  : <div className="grid aspect-[1.91/1] w-full place-items-center rounded-lg border border-dashed border-slate-300 bg-white text-[10px] text-slate-400">No social image selected</div>}
+                  ? <div className="grid aspect-[1.91/1] w-full place-items-center overflow-hidden bg-slate-100"><img src={content.siteSettings.socialImageUrl} alt={content.siteSettings.socialImageAlt || 'Social sharing preview'} className="max-h-full max-w-full object-contain" /></div>
+                  : <div className="grid aspect-[1.91/1] w-full place-items-center border-b border-dashed border-slate-300 bg-slate-50 text-[10px] text-slate-400">No social image selected</div>}
+                <div className="p-3.5">
+                  <p className="truncate text-[9px] text-emerald-700">{content.siteSettings?.canonicalUrl || window.location.origin}</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-900">{content.siteSettings?.openGraphTitle || content.siteSettings?.siteTitle || 'Portfolio title'}</p>
+                  <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-slate-600">{content.siteSettings?.openGraphDescription || content.siteSettings?.metaDescription || 'Your search and social description will appear here.'}</p>
+                </div>
               </div>
+              <p className="mt-2 text-center text-[9px] text-slate-500">Open Graph is used by WhatsApp, Facebook and LinkedIn; X reads Twitter Card metadata. Platforms choose the final card layout and may crop previews.</p>
             </div>
           </section>
         </div>

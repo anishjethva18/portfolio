@@ -31,11 +31,14 @@ import { windowsStorageService } from './services/windowsStorageService';
 import { AdminContentDraftModel, FileMetadataModel, ProjectModel } from './models';
 import { retainAnalyticsUntilReset } from './models/Analytics';
 import { contentStudioRouter } from './routes/contentStudio';
+import { socialPreviewRouter } from './routes/socialPreview';
+import { getPublishedSocialImageInfo, getPublishedSocialMediaId, getSocialPreviewPath } from './services/publishedSocialImageService';
 import { widgetsRouter } from './routes/widgets';
 import { fileService } from './services/fileService';
 import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
 import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
+import { renderSeoMetadataHtml } from '../client/src/utils/seoMetadata';
 import {
   buildContentSecurityPolicyDirectives,
   buildCorsPolicy,
@@ -72,46 +75,6 @@ function getPortfolioMediaId(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function updateMetaTag(html: string, attribute: 'name' | 'property', key: string, value: string): string {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const matcher = new RegExp(`<meta\\b(?=[^>]*\\b${attribute}=["']${escapedKey}["'])[^>]*>`, 'i');
-  const existingTag = html.match(matcher)?.[0];
-  if (!value) return existingTag ? html.replace(existingTag, '') : html;
-  const tag = `<meta ${attribute}="${key}" content="${escapeHtmlAttribute(value)}" />`;
-  return existingTag
-    ? html.replace(existingTag, tag)
-    : html.replace('</head>', `    ${tag}\n  </head>`);
-}
-
-function updateLinkTag(html: string, rel: 'canonical' | 'icon', href: string): string {
-  const matcher = new RegExp(`<link\\b(?=[^>]*\\brel=["']${rel}["'])[^>]*>`, 'i');
-  const existingTag = html.match(matcher)?.[0];
-  if (rel === 'icon') {
-    const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
-    const iconTag = `<link rel="icon" href="${fallback}" type="image/svg+xml" data-configured-favicon="${escapeHtmlAttribute(href)}" />`;
-    let updated = existingTag
-      ? html.replace(existingTag, iconTag)
-      : html.replace('</head>', `    ${iconTag}\n  </head>`);
-    const preloadMatcher = /<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/i;
-    const preloadTag = href
-      ? `<link rel="preload" as="image" href="${escapeHtmlAttribute(href)}" data-seo-favicon-preload="true" />`
-      : '';
-    const existingPreload = updated.match(preloadMatcher)?.[0];
-    if (existingPreload) updated = updated.replace(existingPreload, preloadTag);
-    else if (preloadTag) updated = updated.replace('</head>', `    ${preloadTag}\n  </head>`);
-    return updated;
-  }
-  if (!href) return existingTag ? html.replace(existingTag, '') : html;
-  const tag = `<link rel="${rel}" href="${escapeHtmlAttribute(href)}" />`;
-  return existingTag
-    ? html.replace(existingTag, tag)
-    : html.replace('</head>', `    ${tag}\n  </head>`);
 }
 
 async function startServer() {
@@ -228,13 +191,20 @@ async function startServer() {
   app.use('/api/storage', storageRouter);
   app.use('/api/captures', capturesRouter);
   app.use('/api/admin/content-studio', contentStudioRouter);
+  app.use('/api/admin/social-preview', socialPreviewRouter);
   app.use('/api/admin', adminRouter);
 
-  app.get('/api/seo-metadata', async (_req, res) => {
+  app.get('/api/seo-metadata', async (req, res) => {
     try {
       const content = await getLivePortfolioContent();
       const settings = content.siteSettings || {};
       const profile = content.profile || {};
+      const requestOrigin = `${req.protocol}://${req.get('host')}`;
+      const socialImage = await getPublishedSocialImageInfo(
+        settings.socialImageUrl,
+        settings.socialImageAlt,
+        requestOrigin,
+      );
       res.setHeader('Cache-Control', 'no-store');
       res.json({
         success: true,
@@ -251,6 +221,13 @@ async function startServer() {
             metaDescription: settings.metaDescription,
             faviconUrl: settings.faviconUrl,
             socialImageUrl: settings.socialImageUrl,
+            socialPreviewUrl: socialImage?.fileId && socialImage.url
+              ? new URL(socialImage.url).pathname
+              : settings.socialImageUrl,
+            socialImageAlt: settings.socialImageAlt,
+            socialImageWidth: socialImage?.width,
+            socialImageHeight: socialImage?.height,
+            socialImageType: socialImage?.contentType,
             openGraphTitle: settings.openGraphTitle,
             openGraphDescription: settings.openGraphDescription,
             canonicalUrl: settings.canonicalUrl,
@@ -262,6 +239,57 @@ async function startServer() {
       });
     } catch {
       res.status(503).json({ success: false, error: 'Published SEO metadata could not be loaded.' });
+    }
+  });
+
+  app.get('/social-preview.:extension', async (req, res) => {
+    try {
+      const content = await getLivePortfolioContent() as Record<string, unknown>;
+      const siteSettings = content.siteSettings && typeof content.siteSettings === 'object'
+        ? content.siteSettings as Record<string, unknown>
+        : {};
+      const publicOrigin = `${req.protocol}://${req.get('host')}`;
+      const image = await getPublishedSocialImageInfo(
+        siteSettings.socialImageUrl,
+        siteSettings.socialImageAlt,
+        publicOrigin,
+      );
+      const mediaId = getPublishedSocialMediaId(siteSettings.socialImageUrl);
+      if (!image?.fileId || image.fileId !== mediaId) {
+        res.status(404).json({ success: false, error: 'Published social preview image not found.' });
+        return;
+      }
+      const file = await FileMetadataModel.findOne({
+        id: mediaId,
+        path: { $regex: '^Portfolio/Media/' },
+      }).lean();
+      if (!file || !image.contentType?.startsWith('image/') ||
+        getSocialPreviewPath(image.contentType) !== req.path) {
+        res.status(404).json({ success: false, error: 'Published social preview image not found.' });
+        return;
+      }
+      res.setHeader('Content-Type', image.contentType);
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const safePath = fileService.resolveSafeDiskPath(file.diskPath);
+      if (safePath && fs.existsSync(safePath)) {
+        res.sendFile(safePath, (error) => {
+          if (error && !res.headersSent) res.status(404).json({ success: false, error: 'Published social preview image could not be read.' });
+        });
+        return;
+      }
+      const buffer = fileService.getStoredFileBuffer(file);
+      if (!buffer) {
+        res.status(503).json({ success: false, error: 'Published social preview image is temporarily unavailable.' });
+        return;
+      }
+      res.setHeader('Content-Length', buffer.length);
+      res.send(buffer);
+    } catch (error) {
+      console.error('[Social preview] Could not serve the published image.', error);
+      res.status(503).json({ success: false, error: 'Published social preview image is temporarily unavailable.' });
     }
   });
 
@@ -362,6 +390,11 @@ async function startServer() {
         gif: 'image/gif',
         ico: 'image/x-icon',
         bmp: 'image/bmp',
+        tif: 'image/tiff',
+        tiff: 'image/tiff',
+        heic: 'image/heic',
+        heif: 'image/heif',
+        avif: 'image/avif',
         pdf: 'application/pdf',
       };
       const extension = (file.extension || '').toLowerCase();
@@ -420,6 +453,11 @@ async function startServer() {
         gif: 'image/gif',
         ico: 'image/x-icon',
         bmp: 'image/bmp',
+        tif: 'image/tiff',
+        tiff: 'image/tiff',
+        heic: 'image/heic',
+        heif: 'image/heif',
+        avif: 'image/avif',
       };
       const configuredEmailImageUrls = [
         publishedContent.siteSettings?.emailBrandImageUrl,
@@ -659,8 +697,6 @@ async function startServer() {
         const profile = content.profile && typeof content.profile === 'object'
           ? content.profile as Record<string, unknown>
           : {};
-        const siteTitle = typeof siteSettings.siteTitle === 'string' ? siteSettings.siteTitle : '';
-        const description = typeof siteSettings.metaDescription === 'string' ? siteSettings.metaDescription : '';
         const website = typeof profile.website === 'string' ? profile.website : '';
         const requestOrigin = `${req.protocol}://${req.get('host')}`;
         const publicOrigin = (() => {
@@ -680,20 +716,24 @@ async function startServer() {
             return '';
           }
         };
-        const socialImageUrl = resolvePublicImage(siteSettings.socialImageUrl);
-        const faviconUrl = resolvePublicImage(siteSettings.faviconUrl);
-        const canonicalUrl = /^https?:\/\//i.test(website) ? website : '';
-        if (siteTitle) html = html.replace(/<title>[^<]*<\/title>/i, `<title>${escapeHtmlAttribute(siteTitle)}</title>`);
-        html = updateMetaTag(html, 'name', 'description', description);
-        html = updateMetaTag(html, 'property', 'og:title', siteTitle);
-        html = updateMetaTag(html, 'property', 'og:description', description);
-        html = updateMetaTag(html, 'property', 'og:image', socialImageUrl);
-        html = updateMetaTag(html, 'name', 'twitter:card', socialImageUrl ? 'summary_large_image' : 'summary');
-        html = updateMetaTag(html, 'name', 'twitter:title', siteTitle);
-        html = updateMetaTag(html, 'name', 'twitter:description', description);
-        html = updateMetaTag(html, 'name', 'twitter:image', socialImageUrl);
-        html = updateLinkTag(html, 'canonical', canonicalUrl);
-        html = updateLinkTag(html, 'icon', faviconUrl);
+        const socialImage = await getPublishedSocialImageInfo(
+          siteSettings.socialImageUrl,
+          siteSettings.socialImageAlt,
+          publicOrigin,
+        );
+        const socialImageUrl = socialImage?.url || resolvePublicImage(siteSettings.socialImageUrl);
+        const canonicalUrl = resolvePublicImage(siteSettings.canonicalUrl) || (/^https?:\/\//i.test(website) ? website : '');
+        html = renderSeoMetadataHtml(html, {
+          profile,
+          siteSettings: {
+            ...siteSettings,
+            canonicalUrl: canonicalUrl || website,
+            socialPreviewUrl: socialImageUrl,
+            socialImageWidth: socialImage?.width,
+            socialImageHeight: socialImage?.height,
+            socialImageType: socialImage?.contentType,
+          },
+        }, publicOrigin);
         res.setHeader('Cache-Control', 'no-cache');
         res.type('html').send(html);
       } catch (error) {

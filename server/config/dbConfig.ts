@@ -17,6 +17,7 @@ import {
   SessionHistoryModel,
   SessionModel,
   SiteContentModel,
+  SocialPreviewAssetModel,
   TaskModel,
   UserModel,
 } from '../models';
@@ -51,6 +52,7 @@ const APPLICATION_MODELS = [
   FileMetadataModel,
   PasswordResetTokenModel,
   SiteContentModel,
+  SocialPreviewAssetModel,
   SessionModel,
   SessionHistoryModel,
   CaptureModel,

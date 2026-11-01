@@ -107,6 +107,7 @@ export interface ISiteContent extends Document {
     twitterDescription?: string;
     portfolioVersion?: string;
     socialImageUrl?: string;
+    socialImageAlt?: string;
     faviconUrl?: string;
     emailBrandImageUrl?: string;
     emailFaviconEnabled?: boolean;
@@ -273,6 +274,7 @@ const SiteContentSchema = new Schema<ISiteContent>(
       twitterDescription: { type: String, trim: true, maxlength: 320, default: '' },
       portfolioVersion: { type: String, default: '1.0.0', trim: true, maxlength: 32 },
       socialImageUrl: { type: String, default: '' },
+      socialImageAlt: { type: String, trim: true, maxlength: 300, default: '' },
       faviconUrl: { type: String, default: '' },
       emailBrandImageUrl: { type: String, default: '' },
       emailFaviconEnabled: { type: Boolean, default: true },

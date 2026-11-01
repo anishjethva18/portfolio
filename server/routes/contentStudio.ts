@@ -5,6 +5,7 @@ import { contentStudioService } from '../services/contentStudioService';
 import mongoose from 'mongoose';
 import { getEmailConfig } from '../config/emailConfig';
 import { projectDraftService } from '../services/projectDraftService';
+import { cleanupObsoleteSocialPreviewVariants } from '../services/publishedSocialImageService';
 
 export const contentStudioRouter = Router();
 contentStudioRouter.use(requireAdmin, validateCsrf);
@@ -73,7 +74,14 @@ contentStudioRouter.post('/publish', async (req: AuthenticatedRequest, res: Resp
   try {
     const snapshot = await contentStudioService.publishDraft(req.user!.userId);
     await projectDraftService.publishDraftProjects();
-    res.json({ success: true, ...snapshot });
+    const cleanupWarnings: string[] = [];
+    try {
+      cleanupWarnings.push(...await cleanupObsoleteSocialPreviewVariants());
+    } catch (error) {
+      console.error('[Social image] Could not clean up obsolete variants after publishing.', error);
+      cleanupWarnings.push('Some obsolete generated social image variants could not be cleaned up.');
+    }
+    res.json({ success: true, cleanupWarnings, ...snapshot });
   } catch (error: any) {
     const status = error.message?.includes('Save a draft') ? 409 : error.message?.includes('must') ? 422 : 503;
     res.status(status).json({ success: false, error: error.message || 'Draft could not be published.' });

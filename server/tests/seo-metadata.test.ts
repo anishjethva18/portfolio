@@ -20,6 +20,11 @@ const publishedContent = {
     metaDescription: 'Published homepage description.',
     faviconUrl: '/favicon.png',
     socialImageUrl: '/social.png',
+    socialPreviewUrl: '/social-preview.jpg',
+    socialImageWidth: 1200,
+    socialImageHeight: 630,
+    socialImageType: 'image/jpeg',
+    socialImageAlt: 'A wide portfolio preview image.',
     openGraphTitle: 'Published Open Graph title',
     openGraphDescription: 'Published Open Graph description.',
     canonicalUrl: 'https://portfolio.example.test/',
@@ -109,6 +114,11 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
     /property="og:title"/gi,
     /property="og:description"/gi,
     /property="og:image"/gi,
+    /property="og:image:secure_url"/gi,
+    /property="og:image:width"/gi,
+    /property="og:image:height"/gi,
+    /property="og:image:type"/gi,
+    /property="og:image:alt"/gi,
     /property="og:url"/gi,
     /property="og:type"/gi,
     /name="twitter:card"/gi,
@@ -121,14 +131,19 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
   }
 
   assert.match(rendered, /<title data-seo="title">Published Homepage Title<\/title>/);
-  assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
+  assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/social-preview\.jpg"/);
+  assert.match(rendered, /property="og:image:width" content="1200"/);
+  assert.match(rendered, /property="og:image:height" content="630"/);
+  assert.match(rendered, /property="og:image:type" content="image\/jpeg"/);
+  assert.match(rendered, /property="og:image:alt" content="A wide portfolio preview image\."/);
+  assert.match(rendered, /name="twitter:card" content="summary_large_image"/);
   assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/"/);
   assert.match(rendered, /rel="icon" href="data:image\/svg\+xml,/);
   assert.match(rendered, /data-configured-favicon="https:\/\/portfolio\.example\.test\/favicon\.png"/);
   assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
   assert.match(rendered, /name="twitter:title" content="Published Twitter title"/);
   assert.match(rendered, /name="twitter:description" content="Published Twitter description\."/);
-  assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/social\.png"/);
+  assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/social-preview\.jpg"/);
   const jsonLdText = rendered.match(/<script id="website-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(jsonLdText);
   assert.deepEqual(JSON.parse(jsonLdText), {
@@ -181,6 +196,18 @@ test('homepage HTML keeps an immediate fallback favicon while preloading the con
   assert.equal(rendered.match(/<link rel="icon"/g)?.length, 1);
   assert.match(rendered, /<link rel="icon" href="data:image\/svg\+xml,/);
   assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
+});
+
+test('homepage metadata removes stale image dimensions when the published image has none', async () => {
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  const rendered = renderSeoMetadataHtml(
+    html,
+    { siteSettings: { socialImageUrl: 'https://cdn.example.test/image.jpg' } },
+    'https://portfolio.example.test/',
+  );
+  assert.doesNotMatch(rendered, /property="og:image:width"/);
+  assert.doesNotMatch(rendered, /property="og:image:height"/);
+  assert.doesNotMatch(rendered, /property="og:image:type"/);
 });
 
 test('empty settings use safe absolute defaults and untrusted text is escaped', () => {
@@ -240,6 +267,20 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('Netlify proxies only generated social formats and preserves API and SEO routing', async () => {
+  const config = await readFile(new URL('../../netlify.toml', import.meta.url), 'utf8');
+  const socialRoutes = [...config.matchAll(/from = "\/social-preview\.([a-z]+)"/g)]
+    .map((match) => match[1])
+    .sort();
+  const socialRedirects = config.split('[[redirects]]')
+    .filter((block) => block.includes('from = "/social-preview.'));
+  assert.deepEqual(socialRoutes, ['jpg', 'png', 'webp']);
+  assert.equal(socialRedirects.length, 3);
+  assert.ok(socialRedirects.every((block) => !/force\s*=\s*true/.test(block)));
+  assert.match(config, /function = "seo-metadata"\s+path = "\/"/);
+  assert.match(config, /from = "\/api\/\*"\s+to = "https:\/\/portfolio-ub24\.onrender\.com\/api\/:splat"\s+status = 200\s+force = true/);
 });
 
 test('publishing SEO metadata remains unavailable without administrator authentication', async () => {

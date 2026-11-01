@@ -11,6 +11,11 @@ export interface SeoContent {
     metaDescription?: unknown;
     faviconUrl?: unknown;
     socialImageUrl?: unknown;
+    socialPreviewUrl?: unknown;
+    socialImageAlt?: unknown;
+    socialImageWidth?: unknown;
+    socialImageHeight?: unknown;
+    socialImageType?: unknown;
     openGraphTitle?: unknown;
     openGraphDescription?: unknown;
     canonicalUrl?: unknown;
@@ -27,6 +32,10 @@ export interface SeoMetadata {
   canonicalUrl: string;
   faviconUrl: string;
   socialImageUrl: string;
+  socialImageWidth: number | null;
+  socialImageHeight: number | null;
+  socialImageType: string;
+  socialImageAlt: string;
   openGraphTitle: string;
   openGraphDescription: string;
   twitterCard: 'summary_large_image';
@@ -100,7 +109,17 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
   const canonicalUrl = resolvePublicUrl(settings.canonicalUrl, baseUrl, '/');
   const faviconUrl = resolvePublicUrl(settings.faviconUrl, baseUrl, FALLBACK_IMAGE);
   const profileAvatarUrl = resolvePublicUrl(profile.avatar, baseUrl, FALLBACK_IMAGE);
-  const socialImageUrl = resolvePublicUrl(settings.socialImageUrl, baseUrl, profileAvatarUrl);
+  const socialImageUrl = resolvePublicUrl(settings.socialPreviewUrl ?? settings.socialImageUrl, baseUrl, profileAvatarUrl);
+  const socialImageWidth = typeof settings.socialImageWidth === 'number' && Number.isSafeInteger(settings.socialImageWidth) && settings.socialImageWidth > 0
+    ? settings.socialImageWidth
+    : null;
+  const socialImageHeight = typeof settings.socialImageHeight === 'number' && Number.isSafeInteger(settings.socialImageHeight) && settings.socialImageHeight > 0
+    ? settings.socialImageHeight
+    : null;
+  const socialImageType = typeof settings.socialImageType === 'string' && /^image\/[a-z0-9.+-]+$/i.test(settings.socialImageType)
+    ? settings.socialImageType
+    : '';
+  const socialImageAlt = safeText(settings.socialImageAlt, `${siteName} social sharing image`, 300);
   const openGraphTitle = safeText(settings.openGraphTitle, title, 120);
   const openGraphDescription = safeText(settings.openGraphDescription, description, 320);
   const twitterCard = 'summary_large_image';
@@ -112,6 +131,10 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
     canonicalUrl,
     faviconUrl,
     socialImageUrl,
+    socialImageWidth,
+    socialImageHeight,
+    socialImageType,
+    socialImageAlt,
     openGraphTitle,
     openGraphDescription,
     twitterCard,
@@ -149,6 +172,10 @@ function upsertMeta(
     },
   );
   element.content = content;
+}
+
+function removeMeta(head: Document['head'], attribute: 'name' | 'property', key: string): void {
+  head.querySelectorAll(`meta[${attribute}="${key}"]`).forEach((element) => element.remove());
 }
 
 function applyFavicon(url: string, targetDocument: Document): void {
@@ -226,12 +253,21 @@ export function applySeoMetadata(content: SeoContent, baseUrl: string, targetDoc
   upsertMeta(targetDocument.head, targetDocument, 'property', 'og:title', metadata.openGraphTitle);
   upsertMeta(targetDocument.head, targetDocument, 'property', 'og:description', metadata.openGraphDescription);
   upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image', metadata.socialImageUrl);
+  upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image:secure_url', metadata.socialImageUrl);
+  if (metadata.socialImageWidth) upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image:width', String(metadata.socialImageWidth));
+  else removeMeta(targetDocument.head, 'property', 'og:image:width');
+  if (metadata.socialImageHeight) upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image:height', String(metadata.socialImageHeight));
+  else removeMeta(targetDocument.head, 'property', 'og:image:height');
+  if (metadata.socialImageType) upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image:type', metadata.socialImageType);
+  else removeMeta(targetDocument.head, 'property', 'og:image:type');
+  upsertMeta(targetDocument.head, targetDocument, 'property', 'og:image:alt', metadata.socialImageAlt);
   upsertMeta(targetDocument.head, targetDocument, 'property', 'og:url', metadata.canonicalUrl);
   upsertMeta(targetDocument.head, targetDocument, 'property', 'og:type', 'website');
   upsertMeta(targetDocument.head, targetDocument, 'name', 'twitter:card', metadata.twitterCard);
   upsertMeta(targetDocument.head, targetDocument, 'name', 'twitter:title', metadata.twitterTitle);
   upsertMeta(targetDocument.head, targetDocument, 'name', 'twitter:description', metadata.twitterDescription);
   upsertMeta(targetDocument.head, targetDocument, 'name', 'twitter:image', metadata.socialImageUrl);
+  upsertMeta(targetDocument.head, targetDocument, 'name', 'twitter:image:alt', metadata.socialImageAlt);
 
   const canonical = removeDuplicateElements(
     targetDocument.head,
@@ -298,18 +334,27 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
     ['property', 'og:title', metadata.openGraphTitle],
     ['property', 'og:description', metadata.openGraphDescription],
     ['property', 'og:image', metadata.socialImageUrl],
+    ['property', 'og:image:secure_url', metadata.socialImageUrl],
+    ['property', 'og:image:alt', metadata.socialImageAlt],
+    ['property', 'og:image:width', metadata.socialImageWidth ? String(metadata.socialImageWidth) : ''],
+    ['property', 'og:image:height', metadata.socialImageHeight ? String(metadata.socialImageHeight) : ''],
+    ['property', 'og:image:type', metadata.socialImageType],
     ['property', 'og:url', metadata.canonicalUrl],
     ['property', 'og:type', 'website'],
     ['name', 'twitter:card', metadata.twitterCard],
     ['name', 'twitter:title', metadata.twitterTitle],
     ['name', 'twitter:description', metadata.twitterDescription],
     ['name', 'twitter:image', metadata.socialImageUrl],
+    ['name', 'twitter:image:alt', metadata.socialImageAlt],
   ];
-
   let output = html;
   for (const [attribute, key, value] of metaTags) {
     const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const selector = new RegExp(`<meta\\b(?=[^>]*\\b(?:name|property)=["']${escapedKey}["'])[^>]*>`, 'gi');
+    if (!value && ['og:image:width', 'og:image:height', 'og:image:type'].includes(key)) {
+      output = replaceHeadTag(output, selector, '');
+      continue;
+    }
     output = replaceHeadTag(
       output,
       selector,

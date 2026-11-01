@@ -36,7 +36,7 @@ const CHANGE_FIELDS: Record<string, string> = {
   socialLinks: 'Additional links', defaultTheme: 'Default theme', defaultWallpaper: 'Default wallpaper',
   defaultWallpaperUrl: 'Uploaded wallpaper', defaultIconTheme: 'Icon theme', defaultAccentColor: 'Accent color',
   emailFaviconEnabled: 'Email branding image in emails', emailBrandImageUrl: 'Email branding image',
-  socialImageUrl: 'Social sharing image', faviconUrl: 'Website favicon',
+  socialImageUrl: 'Social sharing image', socialImageAlt: 'Social image description', faviconUrl: 'Website favicon',
   siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
   portfolioVersion: 'Portfolio version',
   openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
@@ -340,6 +340,10 @@ function validateContent(content: Record<string, unknown>): string | null {
     return 'siteSettings must be an object.';
   }
   const siteSettings = content.siteSettings as Record<string, unknown> | undefined;
+  if (siteSettings?.socialImageAlt !== undefined &&
+    (typeof siteSettings.socialImageAlt !== 'string' || siteSettings.socialImageAlt.length > 300)) {
+    return 'Social preview image description must be text no longer than 300 characters.';
+  }
   const desktopShortcuts = siteSettings?.desktopShortcuts;
   if (desktopShortcuts !== undefined) {
     if (!Array.isArray(desktopShortcuts) || desktopShortcuts.length > 100) {
