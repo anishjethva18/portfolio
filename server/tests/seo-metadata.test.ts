@@ -314,7 +314,8 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
     );
     const html = await response.text();
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=0, must-revalidate');
+    assert.equal(response.headers.get('netlify-cdn-cache-control'), 'no-store');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.has('content-length'), false);
     assert.match(html, /Published Homepage Title/);
     assert.match(html, /Published homepage description\./);
@@ -361,6 +362,8 @@ test('Netlify returns rewritten metadata as a complete response for Meta range r
     assert.equal(response.headers.has('content-range'), false);
     assert.equal(response.headers.has('accept-ranges'), false);
     assert.equal(response.headers.has('content-length'), false);
+    assert.equal(response.headers.get('netlify-cdn-cache-control'), 'no-store');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.match(rendered, /property="og:site_name" content="Published Site Name"/);
     assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/file-original-social-image"/);
   } finally {

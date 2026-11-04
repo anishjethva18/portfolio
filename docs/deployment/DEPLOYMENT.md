@@ -680,7 +680,9 @@ currently provides a PWA.
 - [ ] Simulate Meta's crawler with `Range: bytes=0-524288`; the rewritten
       homepage must return a complete HTTP 200 response with no stale
       `Content-Range` or `Accept-Ranges` headers, and all Open Graph tags must
-      be present in that response.
+      be present in that response. Confirm the dynamic metadata HTML uses
+      `Netlify-CDN-Cache-Control: no-store` and `Cache-Control: no-store` so
+      stale SEO values are not reused by edge or browser caches.
 - [ ] Confirm WebSite JSON-LD `name`, `alternateName`, and `url` match the
       published site name and canonical URL.
 - [ ] Confirm the published favicon URL is absolute/public, returns HTTP 200

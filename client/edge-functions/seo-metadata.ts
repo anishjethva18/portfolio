@@ -41,7 +41,8 @@ export async function renderHomepageMetadata(request: Request, context: EdgeCont
     headers.delete('content-encoding');
     headers.delete('content-range');
     headers.delete('accept-ranges');
-    headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    headers.set('Netlify-CDN-Cache-Control', 'no-store');
+    headers.set('Cache-Control', 'no-store');
     const status = response.status === 206 ? 200 : response.status;
     return new Response(htmlWithMetadata, {
       status,
