@@ -17,6 +17,13 @@ const SOCIAL_PREVIEW_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
+const LEGACY_SOCIAL_DERIVATIVE_NAMES = new Set([
+  'original-image-open-graph-jpeg.jpg',
+  'social-preview-x-large-jpeg.jpg',
+  'social-preview-square-jpeg.jpg',
+  'social-preview-open-graph-webp.webp',
+  'social-preview-open-graph-png.png',
+]);
 
 const dimensionCache = new Map<string, { width: number; height: number; contentType: string }>();
 
@@ -78,21 +85,6 @@ export async function getPublishedSocialImageInfo(
   }).lean();
   if (!file) return null;
 
-  const asset = await SocialPreviewAssetModel.findOne({ 'variants.fileId': mediaId }).lean();
-  const variant = asset?.variants.find((candidate) => candidate.fileId === mediaId);
-  if (variant) {
-    const previewPath = getSocialPreviewPath(variant.contentType);
-    if (!previewPath) return null;
-    return {
-      url: new URL(previewPath, baseUrl).href,
-      width: variant.width,
-      height: variant.height,
-      contentType: variant.contentType,
-      alt,
-      fileId: mediaId,
-    };
-  }
-
   const cacheKey = `${file.id}:${file.modified}`;
   let dimensions = dimensionCache.get(cacheKey);
   if (!dimensions) {
@@ -121,9 +113,7 @@ export async function getPublishedSocialImageInfo(
   }
 
   return {
-    url: getSocialPreviewPath(dimensions.contentType)
-      ? new URL(getSocialPreviewPath(dimensions.contentType)!, baseUrl).href
-      : new URL(socialImageUrl, baseUrl).href,
+    url: new URL(`/api/portfolio-media/${encodeURIComponent(mediaId)}`, baseUrl).href,
     width: dimensions.width,
     height: dimensions.height,
     contentType: dimensions.contentType,
@@ -144,14 +134,21 @@ export async function cleanupObsoleteSocialPreviewVariants(): Promise<string[]> 
     AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean(),
     SocialPreviewAssetModel.find().lean(),
   ]);
-  const contentSettings = publishedContent?.siteSettings as Record<string, unknown> | undefined;
-  const selectedVariantId = getMediaId(typeof contentSettings?.socialImageUrl === 'string' ? contentSettings.socialImageUrl : '');
   const warnings: string[] = [];
+  const publishedImageId = getPublishedSocialMediaId(publishedContent?.siteSettings?.socialImageUrl);
+  const socialOriginalIds = new Set(assets.map((asset) => asset.originalId));
 
   for (const asset of assets) {
-    if (asset.variants.some((variant) => variant.fileId === selectedVariantId)) continue;
     const remainingVariants = [];
     for (const variant of asset.variants) {
+      if (
+        variant.fileId === asset.originalId ||
+        variant.fileId === publishedImageId ||
+        socialOriginalIds.has(variant.fileId)
+      ) {
+        remainingVariants.push(variant);
+        continue;
+      }
       const mediaPath = new URL(`/api/portfolio-media/${encodeURIComponent(variant.fileId)}`, 'https://portfolio.local').pathname;
       const usedElsewhere = [
         publishedContent,
@@ -160,6 +157,14 @@ export async function cleanupObsoleteSocialPreviewVariants(): Promise<string[]> 
         projectDraft?.projects,
       ].some((record) => hasMediaUrlReference(record, mediaPath));
       if (usedElsewhere) {
+        remainingVariants.push(variant);
+        continue;
+      }
+      const variantFile = await FileMetadataModel.findOne({
+        id: variant.fileId,
+        path: { $regex: '^Portfolio/Media/' },
+      }).select('name').lean();
+      if (!variantFile || !LEGACY_SOCIAL_DERIVATIVE_NAMES.has(variantFile.name)) {
         remainingVariants.push(variant);
         continue;
       }

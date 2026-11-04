@@ -6,7 +6,7 @@ This directory contains project-wide operational guides, privacy documentation, 
 
 | Document | Purpose |
 | --- | --- |
-| [Render + Netlify deployment](deployment/render-netlify.md) | Configure and deploy the frontend, API, database, and persistent storage. |
+| [Complete production deployment guide](deployment/DEPLOYMENT.md) | Configure GitHub, MongoDB Atlas, Render, Netlify, SEO, storage, email, verification, and rollback. |
 | [Analytics privacy and retention](privacy/analytics-privacy.md) | Explain collected analytics, access controls, and retention. |
 | [Project analysis report](analysis/project-analysis-report.md) | Dated technical audit and implementation history; findings are historical, not live deployment status. |
 

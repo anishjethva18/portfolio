@@ -258,7 +258,7 @@ MongoDB is the source of truth for account, portfolio, project, and analytics re
 ## 📚 Documentation
 
 - [Documentation index](docs/README.md)
-- [Render + Netlify deployment guide](docs/deployment/render-netlify.md)
+- [Complete production deployment guide](docs/deployment/DEPLOYMENT.md)
 - [Project analysis and implementation history](docs/analysis/project-analysis-report.md) (dated audit; historical measurements and deployment observations are not live status)
 - [Analytics privacy and retention](docs/privacy/analytics-privacy.md)
 - [Server documentation index](server/docs/README.md)

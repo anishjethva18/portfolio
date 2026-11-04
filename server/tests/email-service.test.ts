@@ -483,9 +483,9 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
         $set: {
           'profile.website': 'https://portfolio.example',
           'siteSettings.faviconUrl': '/api/portfolio-media/file-email-brand-test',
-            'siteSettings.emailBrandImageUrl': '/api/portfolio-media/file-independent-email-brand',
-            'siteSettings.emailFaviconEnabled': true,
-          },
+          'siteSettings.emailBrandImageUrl': '/api/portfolio-media/file-legacy-email-brand',
+          'siteSettings.emailFaviconEnabled': true,
+        },
       },
       { upsert: true, setDefaultsOnInsert: true }
     );
@@ -501,14 +501,14 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
       { upsert: true, setDefaultsOnInsert: true }
     );
     const branding = await getEmailBranding('https://portfolio.example');
-    assert.equal(branding.faviconUrl, 'https://api.portfolio.example/api/email/favicon?id=file-independent-email-brand');
+    assert.equal(branding.faviconUrl, 'https://api.portfolio.example/api/email/favicon?id=file-email-brand-test');
 
     delete process.env.EMAIL_PUBLIC_BASE_URL;
     process.env.RENDER_EXTERNAL_URL = 'https://render-api.portfolio.example';
     const renderBranding = await getEmailBranding('https://portfolio.example');
     assert.equal(
       renderBranding.faviconUrl,
-      'https://render-api.portfolio.example/api/email/favicon?id=file-independent-email-brand'
+      'https://render-api.portfolio.example/api/email/favicon?id=file-email-brand-test'
     );
 
     delete process.env.RENDER_EXTERNAL_URL;
@@ -516,7 +516,7 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
     const hostnameBranding = await getEmailBranding('https://portfolio.example');
     assert.equal(
       hostnameBranding.faviconUrl,
-      'https://render-api.portfolio.example/api/email/favicon?id=file-independent-email-brand'
+      'https://render-api.portfolio.example/api/email/favicon?id=file-email-brand-test'
     );
 
     const transporter = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
@@ -531,7 +531,7 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
       ),
     });
     const mime = result.message.toString().replace(/=\r?\n/g, '');
-    assert.match(mime, /src=3D"https:\/\/render-api\.portfolio\.example\/api\/email\/favicon\?id=3Dfile-independent-email-brand"/);
+    assert.match(mime, /src=3D"https:\/\/render-api\.portfolio\.example\/api\/email\/favicon\?id=3Dfile-email-brand-test"/);
     assert.doesNotMatch(mime, /Content-ID:|Content-Disposition: inline|Content-Type: image\/|filename=/i);
     assert.doesNotMatch(mime, /Content-Disposition: attachment/i);
 
@@ -549,7 +549,7 @@ test('email branding emits the public favicon endpoint and no favicon MIME attac
       { key: 'primary_portfolio_content' },
       {
         $set: {
-          'siteSettings.emailBrandImageUrl': '',
+          'siteSettings.emailBrandImageUrl': '/api/portfolio-media/file-legacy-email-brand',
           'siteSettings.faviconUrl': '',
         },
       }

@@ -10,7 +10,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import contactRouter from './routes/contact';
 import { browseRouter } from './routes/browse';
-import { filesRouter, hasMediaUrlReference, hasVisibleResumeMediaReference } from './routes/files';
+import { filesRouter } from './routes/files';
 import { profileRouter } from './routes/profile';
 import { authRouter } from './routes/auth';
 import { tasksRouter } from './routes/tasks';
@@ -21,14 +21,13 @@ import { capturesRouter } from './routes/captures';
 import { adminRouter, getLivePortfolioContent } from './routes/admin';
 import { healthRouter } from './routes/health';
 import { analyticsLogger } from './middleware/security';
-import { AuthenticatedRequest, optionalAuth, requireAdmin, validateCsrf } from './middleware/auth';
-import { projectDraftService } from './services/projectDraftService';
+import { requireAdmin, validateCsrf } from './middleware/auth';
 import { apiNotFoundHandler } from './middleware/apiNotFound';
 import { getAuthConfig } from './config/authConfig';
 import { connectMongo, disconnectMongo, ensureApplicationCollections } from './config/dbConfig';
 import { db } from './db/database';
 import { windowsStorageService } from './services/windowsStorageService';
-import { AdminContentDraftModel, FileMetadataModel, ProjectModel } from './models';
+import { FileMetadataModel, ProjectModel } from './models';
 import { retainAnalyticsUntilReset } from './models/Analytics';
 import { contentStudioRouter } from './routes/contentStudio';
 import { socialPreviewRouter } from './routes/socialPreview';
@@ -38,6 +37,7 @@ import { fileService } from './services/fileService';
 import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
 import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
+import { portfolioMediaRouter } from './routes/portfolioMedia';
 import { renderSeoMetadataHtml, stripSeoMetadataHtml } from '../client/src/utils/seoMetadata';
 import { handlePublishedSeoMetadata, loadPublishedSeoMetadata } from './services/seoMetadataService';
 import {
@@ -288,109 +288,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/portfolio-media/:id', optionalAuth, async (req, res) => {
-    try {
-      const requestedId = typeof req.query.id === 'string' ? req.query.id : req.params.id;
-      if (!/^file-[A-Za-z0-9-]+$/.test(requestedId)) {
-        res.status(404).json({ success: false, error: 'Portfolio media not found.' });
-        return;
-      }
-      const file = await FileMetadataModel.findOne({
-        id: requestedId,
-        path: { $regex: '^Portfolio/Media/' },
-      }).lean();
-      if (!file || (requestedId !== req.params.id && file.name !== req.params.id)) {
-        res.status(404).json({ success: false, error: 'Portfolio media not found.' });
-        return;
-      }
-      const mediaUrl = `/api/portfolio-media/${encodeURIComponent(requestedId)}`;
-      const content = await getLivePortfolioContent();
-      const profile = content.profile as Record<string, unknown> | undefined;
-      const siteSettings = content.siteSettings as Record<string, unknown> | undefined;
-      const visibleResumeReferences = hasVisibleResumeMediaReference(content.resumes, mediaUrl);
-      const activeSkillIconReferences = getPublicSkillCategories(content.skills).some((category: any) =>
-        category.skills.some((skill: any) => typeof skill.iconIdentifier === 'string' &&
-          skill.iconIdentifier.startsWith('image:') &&
-          hasMediaUrlReference(skill.iconIdentifier.slice('image:'.length), mediaUrl)));
-      const profileReferences = hasMediaUrlReference([
-        profile?.avatar,
-        profile?.resumeUrl,
-        siteSettings?.socialImageUrl,
-        siteSettings?.faviconUrl,
-        siteSettings?.emailBrandImageUrl,
-        siteSettings?.defaultWallpaperUrl,
-      ], mediaUrl) || visibleResumeReferences || activeSkillIconReferences;
-      const projects = await ProjectModel.find({
-        visible: { $ne: false },
-      }).select('image screenshots').lean();
-      const projectReferences = hasMediaUrlReference(projects, mediaUrl);
-      const isAdmin = (req as AuthenticatedRequest).user?.role === 'admin';
-      const [projectDraftReference, contentDraft] = isAdmin
-        ? await Promise.all([
-            projectDraftService.isDraftMediaReferenced(mediaUrl),
-            AdminContentDraftModel.findOne({ key: 'primary_portfolio_content' }).lean(),
-          ])
-        : [false, null];
-      const adminDraftReference = projectDraftReference || Boolean(contentDraft && hasMediaUrlReference(contentDraft.content, mediaUrl));
-      if (!isAdmin && !profileReferences && !projectReferences && !adminDraftReference) {
-        res.status(404).json({ success: false, error: 'Portfolio media not found.' });
-        return;
-      }
-
-      const mimeTypes: Record<string, string> = {
-        png: 'image/png',
-        jpg: 'image/jpeg',
-        jpeg: 'image/jpeg',
-        webp: 'image/webp',
-        gif: 'image/gif',
-        ico: 'image/x-icon',
-        bmp: 'image/bmp',
-        tif: 'image/tiff',
-        tiff: 'image/tiff',
-        heic: 'image/heic',
-        heif: 'image/heif',
-        avif: 'image/avif',
-        pdf: 'application/pdf',
-      };
-      const extension = (file.extension || '').toLowerCase();
-      const contentType = mimeTypes[extension];
-      const safePath = fileService.resolveSafeDiskPath(file.diskPath);
-      if (!contentType) {
-        res.status(404).json({ success: false, error: 'Portfolio media not found.' });
-        return;
-      }
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Disposition', `inline; filename="${fileService.sanitizeFileName(file.name)}"`);
-      res.setHeader(
-        'Cache-Control',
-        isAdmin && !profileReferences && !projectReferences ? 'private, no-store' : 'public, max-age=3600'
-      );
-      setPortfolioMediaResourcePolicy(res, profileReferences || projectReferences);
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      if (safePath && fs.existsSync(safePath)) {
-        res.sendFile(safePath, (error) => {
-          if (error && !res.headersSent) {
-            res.status(404).json({ success: false, error: 'Portfolio media could not be read.' });
-          }
-        });
-        return;
-      }
-      const buffer = fileService.getStoredFileBuffer(file);
-      if (!buffer) {
-        res.status(503).json({
-          success: false,
-          error: 'Portfolio media content is unavailable; restore the file or configure persistent storage.',
-        });
-        return;
-      }
-      res.setHeader('Content-Length', buffer.length);
-      res.send(buffer);
-    } catch (error) {
-      console.error('[Portfolio media] Could not serve the requested asset.', error);
-      res.status(503).json({ success: false, error: 'Portfolio media is temporarily unavailable.' });
-    }
-  });
+  app.use('/api/portfolio-media', portfolioMediaRouter);
 
   app.get('/api/email/favicon', async (_req, res) => {
     try {

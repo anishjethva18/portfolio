@@ -36,20 +36,14 @@ export async function loadPublishedSeoMetadata(baseUrl: string) {
         siteTitle: settings.siteTitle,
         metaDescription: settings.metaDescription,
         faviconUrl: settings.faviconUrl,
-        socialImageUrl: settings.socialImageUrl,
-        socialPreviewUrl: socialImage?.fileId && socialImage.url
+        socialImageUrl: socialImage?.fileId && socialImage.url
           ? new URL(socialImage.url).pathname
-          : socialImage?.url || '',
+          : socialImage?.url || settings.socialImageUrl,
         socialImageAlt: settings.socialImageAlt,
         socialImageWidth: socialImage?.width,
         socialImageHeight: socialImage?.height,
         socialImageType: socialImage?.contentType,
-        openGraphTitle: settings.openGraphTitle,
-        openGraphDescription: settings.openGraphDescription,
-        canonicalUrl: settings.canonicalUrl || profile.website,
-        twitterCard: settings.twitterCard,
-        twitterTitle: settings.twitterTitle,
-        twitterDescription: settings.twitterDescription,
+        canonicalUrl: settings.canonicalUrl,
       },
     },
   };

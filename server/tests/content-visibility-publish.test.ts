@@ -21,7 +21,7 @@ async function run() {
     ),
     [
       'Site & Appearance · Site name: Old name → New name',
-      'Site & Appearance · Canonical URL: https://old.example.test/ → (empty)',
+      'Site & Appearance · Website URL: https://old.example.test/ → (empty)',
     ],
     'SEO edits and removals are tracked in the shared publish history',
   );
@@ -112,20 +112,19 @@ async function run() {
       assert.equal((snapshot.draft as any).capabilities[0].visible, false);
       assert.equal((snapshot.published as any).siteSettings.siteName, 'Published SEO Test');
       assert.equal((snapshot.published as any).siteSettings.canonicalUrl, 'https://portfolio.example.test/');
-      assert.equal((snapshot.published as any).siteSettings.twitterCard, 'summary_large_image');
       for (const savedContent of [published, draft]) {
         assert.equal(savedContent.siteSettings.siteName, 'Published SEO Test');
         assert.equal(savedContent.siteSettings.siteTitle, 'Published SEO page title');
         assert.equal(savedContent.siteSettings.metaDescription, 'Published SEO description.');
-        assert.equal(savedContent.siteSettings.openGraphTitle, 'Published Open Graph title');
-        assert.equal(savedContent.siteSettings.openGraphDescription, 'Published Open Graph description.');
         assert.equal(savedContent.siteSettings.canonicalUrl, 'https://portfolio.example.test/');
         assert.equal(savedContent.siteSettings.faviconUrl, '/api/portfolio-media/favicon.png?id=file-seo-test');
         assert.equal(savedContent.siteSettings.emailBrandImageUrl, 'https://images.example.test/email-brand.png');
         assert.equal(savedContent.siteSettings.socialImageUrl, 'https://portfolio.example.test/social.png');
-        assert.equal(savedContent.siteSettings.twitterCard, 'summary_large_image');
-        assert.equal(savedContent.siteSettings.twitterTitle, 'Published Twitter title');
-        assert.equal(savedContent.siteSettings.twitterDescription, 'Published Twitter description.');
+        assert.equal(savedContent.siteSettings.openGraphTitle, undefined);
+        assert.equal(savedContent.siteSettings.openGraphDescription, undefined);
+        assert.equal(savedContent.siteSettings.twitterCard, undefined);
+        assert.equal(savedContent.siteSettings.twitterTitle, undefined);
+        assert.equal(savedContent.siteSettings.twitterDescription, undefined);
       }
     }
 

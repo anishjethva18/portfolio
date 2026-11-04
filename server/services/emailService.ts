@@ -128,16 +128,13 @@ export const getEmailBranding = async (requestPublicOrigin = ''): Promise<Publis
   if (mongoose.connection.readyState === 1) {
     try {
       const content = await SiteContentModel.findOne({ key: 'primary_portfolio_content' })
-        .select('profile.website siteSettings.faviconUrl siteSettings.emailBrandImageUrl siteSettings.emailFaviconEnabled')
+        .select('profile.website siteSettings.faviconUrl siteSettings.emailFaviconEnabled')
         .lean();
       publishedWebsite = typeof content?.profile?.website === 'string' ? content.profile.website.trim() : '';
       emailFaviconEnabled = isEmailFaviconEnabled(content?.siteSettings?.emailFaviconEnabled);
-      publishedFavicon = typeof content?.siteSettings?.emailBrandImageUrl === 'string' &&
-        content.siteSettings.emailBrandImageUrl.trim()
-        ? content.siteSettings.emailBrandImageUrl.trim()
-        : typeof content?.siteSettings?.faviconUrl === 'string'
-          ? content.siteSettings.faviconUrl.trim()
-          : '';
+      publishedFavicon = typeof content?.siteSettings?.faviconUrl === 'string'
+        ? content.siteSettings.faviconUrl.trim()
+        : '';
     } catch (error) {
       console.warn('[EmailService] Could not load published email branding or favicon asset.', error);
     }

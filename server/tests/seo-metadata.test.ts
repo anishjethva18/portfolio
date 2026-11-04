@@ -23,18 +23,17 @@ const publishedContent = {
     siteTitle: 'Published Homepage Title',
     metaDescription: 'Published homepage description.',
     faviconUrl: '/favicon.png',
-    socialImageUrl: '/social.png',
-    socialPreviewUrl: '/social-preview.jpg',
+    socialImageUrl: '/api/portfolio-media/file-original-social-image',
     socialImageWidth: 1200,
     socialImageHeight: 630,
     socialImageType: 'image/jpeg',
     socialImageAlt: 'A wide portfolio preview image.',
-    openGraphTitle: 'Published Open Graph title',
-    openGraphDescription: 'Published Open Graph description.',
+    openGraphTitle: 'Legacy Open Graph override must be ignored',
+    openGraphDescription: 'Legacy Open Graph override must be ignored.',
     canonicalUrl: 'https://portfolio.example.test/',
-    twitterCard: 'summary_large_image',
-    twitterTitle: 'Published Twitter title',
-    twitterDescription: 'Published Twitter description.',
+    twitterCard: 'summary',
+    twitterTitle: 'Legacy Twitter override must be ignored',
+    twitterDescription: 'Legacy Twitter override must be ignored.',
   },
 };
 
@@ -135,25 +134,34 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
   }
 
   assert.match(rendered, /<title data-seo="title">Published Homepage Title<\/title>/);
-  assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/social-preview\.jpg"/);
+  assert.match(rendered, /property="og:site_name" content="Published Site Name"/);
+  assert.match(rendered, /property="og:title" content="Published Homepage Title"/);
+  assert.match(rendered, /property="og:description" content="Published homepage description\."/);
+  assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/file-original-social-image"/);
   assert.match(rendered, /property="og:image:width" content="1200"/);
   assert.match(rendered, /property="og:image:height" content="630"/);
   assert.match(rendered, /property="og:image:type" content="image\/jpeg"/);
   assert.match(rendered, /property="og:image:alt" content="A wide portfolio preview image\."/);
   assert.match(rendered, /name="twitter:card" content="summary_large_image"/);
   assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/"/);
-  assert.match(rendered, /rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(rendered, /rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png" type="image\/png"/);
   assert.match(rendered, /data-configured-favicon="https:\/\/portfolio\.example\.test\/favicon\.png"/);
   assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
-  assert.match(rendered, /name="twitter:title" content="Published Twitter title"/);
-  assert.match(rendered, /name="twitter:description" content="Published Twitter description\."/);
-  assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/social-preview\.jpg"/);
+  assert.match(rendered, /name="twitter:title" content="Published Homepage Title"/);
+  assert.match(rendered, /name="twitter:description" content="Published homepage description\."/);
+  assert.doesNotMatch(rendered, /Legacy Open Graph override|Legacy Twitter override/);
+  assert.match(rendered, /name="twitter:image" content="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/file-original-social-image"/);
+  assert.equal(
+    rendered.match(/property="og:image" content="([^"]+)"/)?.[1],
+    rendered.match(/name="twitter:image" content="([^"]+)"/)?.[1],
+  );
   const jsonLdText = rendered.match(/<script id="website-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(jsonLdText);
   assert.deepEqual(JSON.parse(jsonLdText), {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: 'Published Site Name',
+    alternateName: ['Published Site Name Portfolio'],
     url: 'https://portfolio.example.test/',
   });
 });
@@ -194,11 +202,11 @@ test('homepage metadata replaces duplicate tags and makes configured image URLs 
   }
 });
 
-test('homepage HTML keeps an immediate fallback favicon while preloading the configured icon', async () => {
+test('homepage HTML serves the configured favicon before JavaScript runs', async () => {
   const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
   const rendered = renderSeoMetadataHtml(html, publishedContent, 'https://portfolio.example.test/');
   assert.equal(rendered.match(/<link rel="icon"/g)?.length, 1);
-  assert.match(rendered, /<link rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(rendered, /<link rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png" type="image\/png"/);
   assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
 });
 
@@ -222,13 +230,30 @@ test('empty settings use safe absolute defaults and untrusted text is escaped', 
   assert.equal(defaults.faviconUrl, '');
   assert.equal(defaults.socialImageUrl, '');
   assert.equal(defaults.twitterCard, 'summary_large_image');
+  const legacySettings = {
+    twitterCard: 'summary',
+    openGraphTitle: 'Open Graph fallback title',
+    openGraphDescription: 'Open Graph fallback description.',
+    twitterTitle: 'Twitter override',
+    twitterDescription: 'Twitter description override',
+    socialImageUrl: '/api/portfolio-media/file-original-social-image',
+    socialPreviewUrl: '/social-preview.jpg',
+    siteTitle: 'Admin page title',
+    metaDescription: 'Admin page description',
+  };
+  const legacyOverrides = buildSeoMetadata({
+    siteSettings: legacySettings,
+  }, 'https://portfolio.example.test/');
+  assert.equal(legacyOverrides.twitterCard, 'summary_large_image');
+  assert.equal(legacyOverrides.openGraphTitle, 'Admin page title');
+  assert.equal(legacyOverrides.twitterTitle, 'Admin page title');
+  assert.equal(legacyOverrides.openGraphDescription, 'Admin page description');
+  assert.equal(legacyOverrides.twitterDescription, 'Admin page description');
+  assert.equal(legacyOverrides.socialImageUrl, 'https://portfolio.example.test/api/portfolio-media/file-original-social-image');
   assert.equal(buildSeoMetadata({
-    siteSettings: {
-      twitterCard: 'summary',
-      openGraphTitle: 'Open Graph fallback title',
-      openGraphDescription: 'Open Graph fallback description.',
-    },
-  }, 'https://portfolio.example.test/').twitterCard, 'summary');
+    profile: { website: 'https://profile.example.test/' },
+    siteSettings: {},
+  }, 'https://portfolio.example.test/').canonicalUrl, '');
   const invalidImageFallback = buildSeoMetadata(
     { profile: { avatar: 'javascript:alert(1)' }, siteSettings: { socialImageUrl: 'javascript:alert(2)' } },
     'https://portfolio.example.test/',
@@ -292,7 +317,8 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
     assert.equal(response.headers.get('cache-control'), 'public, max-age=0, must-revalidate');
     assert.equal(response.headers.has('content-length'), false);
     assert.match(html, /Published Homepage Title/);
-    assert.match(html, /Published Open Graph description\./);
+    assert.match(html, /Published homepage description\./);
+    assert.doesNotMatch(html, /Legacy Open Graph override|Legacy Twitter override/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -375,15 +401,15 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
       siteName: 'Published SEO Regression Site',
       siteTitle: title,
       metaDescription: `Description for ${title}.`,
-      openGraphTitle: `Open Graph ${title}`,
-      openGraphDescription: `Open Graph description for ${title}.`,
+      openGraphTitle: `Ignored Open Graph ${title}`,
+      openGraphDescription: `Ignored Open Graph description for ${title}.`,
       canonicalUrl: 'https://portfolio.example.test/',
       faviconUrl: '/published-favicon.png',
       socialImageUrl: imageUrl,
       socialImageAlt: `Preview for ${title}.`,
       twitterCard: 'summary',
-      twitterTitle: `Twitter ${title}`,
-      twitterDescription: `Twitter description for ${title}.`,
+      twitterTitle: `Ignored Twitter ${title}`,
+      twitterDescription: `Ignored Twitter description for ${title}.`,
     },
   });
   const renderLiveHtml = async () => {
@@ -426,12 +452,28 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
     assert.doesNotMatch(beforeFirstPublish.html, /<title\b|property="og:|name="twitter:/);
 
     await contentStudioService.publishDraft('seo-metadata-regression');
+    const publishedSeoResponse = await originalFetch(
+      `http://127.0.0.1:${address.port}/api/seo-metadata`,
+    );
+    const publishedSeo = await publishedSeoResponse.json() as {
+      content: { siteSettings: Record<string, unknown> };
+    };
+    assert.equal(publishedSeo.content.siteSettings.socialImageUrl, 'https://images.example.test/first-preview.jpg');
+    assert.equal('socialPreviewUrl' in publishedSeo.content.siteSettings, false);
     const firstPublished = await renderLiveHtml();
     assert.match(firstPublished.html, /<title data-seo="title">First Published Title<\/title>/);
-    assert.match(firstPublished.html, /property="og:title" content="Open Graph First Published Title"/);
+    assert.match(firstPublished.html, /property="og:title" content="First Published Title"/);
+    assert.match(firstPublished.html, /property="og:description" content="Description for First Published Title\."/);
     assert.match(firstPublished.html, /property="og:image" content="https:\/\/images\.example\.test\/first-preview\.jpg"/);
-    assert.match(firstPublished.html, /name="twitter:card" content="summary"/);
+    assert.match(firstPublished.html, /name="twitter:image" content="https:\/\/images\.example\.test\/first-preview\.jpg"/);
+    assert.match(firstPublished.html, /name="twitter:card" content="summary_large_image"/);
+    assert.match(firstPublished.html, /name="twitter:title" content="First Published Title"/);
+    assert.match(firstPublished.html, /name="twitter:description" content="Description for First Published Title\."/);
+    assert.match(firstPublished.html, /rel="icon" href="https:\/\/portfolio\.example\.test\/published-favicon\.png"/);
     assert.match(firstPublished.html, /data-configured-favicon="https:\/\/portfolio\.example\.test\/published-favicon\.png"/);
+    const websiteData = firstPublished.html.match(/<script id="website-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(websiteData);
+    assert.deepEqual(JSON.parse(websiteData).alternateName, ['Published SEO Regression Site Portfolio']);
     assert.doesNotMatch(firstPublished.html, /Developer Portfolio|Interactive developer portfolio|avatar\.png/);
 
     const secondDraft = seoContent('Second Published Title', 'https://images.example.test/second-preview.jpg');
@@ -445,7 +487,7 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
     const secondPublished = await renderLiveHtml();
     assert.match(secondPublished.html, /<title data-seo="title">Second Published Title<\/title>/);
     assert.match(secondPublished.html, /property="og:image" content="https:\/\/images\.example\.test\/second-preview\.jpg"/);
-    assert.match(secondPublished.html, /name="twitter:title" content="Twitter Second Published Title"/);
+    assert.match(secondPublished.html, /name="twitter:title" content="Second Published Title"/);
     assert.doesNotMatch(secondPublished.html, /First Published Title|first-preview\.jpg/);
   } finally {
     globalThis.fetch = originalFetch;

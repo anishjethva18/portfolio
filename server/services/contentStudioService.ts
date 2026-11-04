@@ -39,9 +39,7 @@ const CHANGE_FIELDS: Record<string, string> = {
   socialImageUrl: 'Social sharing image', socialImageAlt: 'Social image description', faviconUrl: 'Website favicon',
   siteName: 'Site name', siteTitle: 'Page title', metaDescription: 'Meta description',
   portfolioVersion: 'Portfolio version',
-  openGraphTitle: 'Open Graph title', openGraphDescription: 'Open Graph description',
-  canonicalUrl: 'Canonical URL', twitterCard: 'Twitter card type',
-  twitterTitle: 'Twitter title', twitterDescription: 'Twitter description',
+  canonicalUrl: 'Website URL',
   maintenanceMode: 'Maintenance mode',
   desktopShortcuts: 'Apps & shortcuts', taskbarPinnedApps: 'Taskbar pins', startPinnedApps: 'Start menu pins',
   adminAppEnabledInStart: 'Admin Start menu visibility', disabledApps: 'Available apps',
@@ -231,6 +229,14 @@ function publicContent(value: unknown): Record<string, unknown> {
   };
 
   const content = clonePublicValue(value) as Record<string, unknown>;
+  if (content.siteSettings && typeof content.siteSettings === 'object' && !Array.isArray(content.siteSettings)) {
+    const siteSettings = content.siteSettings as Record<string, unknown>;
+    delete siteSettings.openGraphTitle;
+    delete siteSettings.openGraphDescription;
+    delete siteSettings.twitterCard;
+    delete siteSettings.twitterTitle;
+    delete siteSettings.twitterDescription;
+  }
   content.skills = normalizeSkillCategories(content.skills);
   return content;
 }
@@ -390,20 +396,12 @@ function validateContent(content: Record<string, unknown>): string | null {
     ['siteName', 160, 'Site name'],
     ['siteTitle', 120, 'Page title'],
     ['metaDescription', 320, 'Meta description'],
-    ['openGraphTitle', 120, 'Open Graph title'],
-    ['openGraphDescription', 320, 'Open Graph description'],
-    ['twitterTitle', 120, 'Twitter title'],
-    ['twitterDescription', 320, 'Twitter description'],
   ] as const;
   for (const [field, maxLength, label] of textLimits) {
     const value = siteSettings?.[field];
     if (value !== undefined && (typeof value !== 'string' || value.length > maxLength)) {
       return `${label} must be text no longer than ${maxLength} characters.`;
     }
-  }
-  if (siteSettings?.twitterCard !== undefined &&
-    siteSettings.twitterCard !== 'summary' && siteSettings.twitterCard !== 'summary_large_image') {
-    return 'Twitter card type must be summary or summary_large_image.';
   }
   for (const [field, label] of [
     ['socialImageUrl', 'Social preview image'],

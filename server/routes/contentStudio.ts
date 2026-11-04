@@ -78,8 +78,8 @@ contentStudioRouter.post('/publish', async (req: AuthenticatedRequest, res: Resp
     try {
       cleanupWarnings.push(...await cleanupObsoleteSocialPreviewVariants());
     } catch (error) {
-      console.error('[Social image] Could not clean up obsolete variants after publishing.', error);
-      cleanupWarnings.push('Some obsolete generated social image variants could not be cleaned up.');
+      console.error('[Social image] Could not clean up unreferenced legacy variants after publishing.', error);
+      cleanupWarnings.push('Some unreferenced legacy social image files could not be cleaned up.');
     }
     res.json({ success: true, cleanupWarnings, ...snapshot });
   } catch (error: any) {

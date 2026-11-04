@@ -4,7 +4,7 @@ import path from 'path';
 import { requireAdmin, validateCsrf, AuthenticatedRequest } from '../middleware/auth';
 import { FileMetadataModel, SocialPreviewAssetModel } from '../models';
 import { fileService } from '../services/fileService';
-import { getSourceExtension, getSocialImageUploadLimits, processSocialImage } from '../services/socialImageProcessingService';
+import { getSourceExtension, getSocialImageUploadLimits, inspectSocialImage } from '../services/socialImageProcessingService';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -32,20 +32,15 @@ function mediaUrl(fileId: string): string {
 async function savePortfolioImage(
   buffer: Buffer,
   name: string,
-  extension: string,
-  contentType: string,
   userId: string,
 ) {
-  const saved = fileService.saveFile({
+  const saved = fileService.saveUploadedBuffer(
+    buffer,
     name,
-    path: `Portfolio/Media/${name}`,
-    parentId: 'Portfolio/Media',
-    type: 'file',
-    extension,
-    content: `data:${contentType};base64,${buffer.toString('base64')}`,
-    size: `${(buffer.length / 1024).toFixed(1)} KB`,
-    sizeBytes: buffer.length,
-  }, userId);
+    `Portfolio/Media/${name}`,
+    'Portfolio/Media',
+    userId,
+  );
   try {
     await FileMetadataModel.updateOne({ id: saved.id }, { $set: saved }, { upsert: true });
   } catch (error) {
@@ -62,7 +57,7 @@ async function savePortfolioImage(
 socialPreviewRouter.post('/upload', parseImageUpload, async (req: AuthenticatedRequest, res: Response) => {
   const image = req.file;
   if (!image) {
-    res.status(400).json({ success: false, error: 'Choose a raster image to upload.' });
+    res.status(400).json({ success: false, error: 'Choose a JPEG, PNG, or WebP image to upload.' });
     return;
   }
   if (!req.user) {
@@ -70,96 +65,73 @@ socialPreviewRouter.post('/upload', parseImageUpload, async (req: AuthenticatedR
     return;
   }
 
-  const savedFiles: string[] = [];
+  let savedFileId: string | undefined;
   try {
-    const processed = await processSocialImage(image.buffer, image.mimetype);
-    const sourceExtension = getSourceExtension(processed.source.format, processed.source.contentType);
-    const sourceName = `${path.parse(image.originalname).name || 'social-image'}.${sourceExtension}`;
+    const inspected = await inspectSocialImage(image.buffer, image.mimetype);
+    const sourceExtension = getSourceExtension(inspected.source.format);
+    const safeOriginalName = fileService.sanitizeFileName(image.originalname);
+    const originalName = path.parse(safeOriginalName);
+    const originalExtension = originalName.ext.slice(1);
+    const normalizedOriginalExtension = originalExtension.toLowerCase();
+    const preserveOriginalExtension = normalizedOriginalExtension === sourceExtension ||
+      (inspected.source.format === 'jpeg' && normalizedOriginalExtension === 'jpeg');
+    const sourceName = `${originalName.name || 'social-image'}.${preserveOriginalExtension ? originalExtension : sourceExtension}`;
     const sourceFile = await savePortfolioImage(
       image.buffer,
       sourceName,
-      sourceExtension,
-      processed.source.contentType,
       req.user.userId,
     );
-    savedFiles.push(sourceFile.id);
-
-    const variants = [];
-    for (const variant of processed.variants) {
-      const extension = variant.format === 'jpeg' ? 'jpg' : variant.format;
-      const variantName = `${path.parse(sourceFile.name).name}-${variant.key}.${extension}`;
-      const variantFile = await savePortfolioImage(
-        variant.buffer,
-        variantName,
-        extension,
-        variant.contentType,
-        req.user.userId,
-      );
-      savedFiles.push(variantFile.id);
-      variants.push({
-        key: variant.key,
-        label: variant.label,
-        fileId: variantFile.id,
-        url: mediaUrl(variantFile.id),
-        width: variant.width,
-        height: variant.height,
-        format: variant.format,
-        contentType: variant.contentType,
-        sizeBytes: variant.sizeBytes,
-      });
-    }
+    savedFileId = sourceFile.id;
 
     const asset = await SocialPreviewAssetModel.findOneAndUpdate(
       { originalId: sourceFile.id },
       {
         $set: {
-          originalName: image.originalname,
-          originalFormat: processed.source.format,
-          originalContentType: processed.source.contentType,
-          originalWidth: processed.source.width,
-          originalHeight: processed.source.height,
-          displayWidth: processed.source.displayWidth,
-          displayHeight: processed.source.displayHeight,
-          originalSizeBytes: processed.source.sizeBytes,
-          orientation: processed.source.orientation,
-          animated: processed.source.animated,
-          variants: variants.map(({ url: _url, ...metadata }) => metadata),
+          originalName: sourceFile.name,
+          originalFormat: inspected.source.format,
+          originalContentType: inspected.source.contentType,
+          originalWidth: inspected.source.width,
+          originalHeight: inspected.source.height,
+          displayWidth: inspected.source.displayWidth,
+          displayHeight: inspected.source.displayHeight,
+          originalSizeBytes: inspected.source.sizeBytes,
+          orientation: inspected.source.orientation,
+          animated: inspected.source.animated,
+          variants: [],
           uploadedBy: req.user.userId,
         },
       },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true },
     ).lean();
 
     res.status(201).json({
       success: true,
       original: {
         id: sourceFile.id,
-        name: image.originalname,
+        name: sourceFile.name,
         url: mediaUrl(sourceFile.id),
-        contentType: processed.source.contentType,
-        width: processed.source.displayWidth,
-        height: processed.source.displayHeight,
-        encodedWidth: processed.source.width,
-        encodedHeight: processed.source.height,
-        sizeBytes: processed.source.sizeBytes,
-        format: processed.source.format,
-        orientation: processed.source.orientation,
-        animated: processed.source.animated,
+        contentType: inspected.source.contentType,
+        width: inspected.source.displayWidth,
+        height: inspected.source.displayHeight,
+        encodedWidth: inspected.source.width,
+        encodedHeight: inspected.source.height,
+        sizeBytes: inspected.source.sizeBytes,
+        format: inspected.source.format,
+        orientation: inspected.source.orientation,
+        animated: inspected.source.animated,
       },
-      variants,
-      defaultVariant: variants.find((variant) => variant.key === 'open-graph-jpeg'),
       assetId: asset?.originalId,
     });
   } catch (error) {
-    for (const id of savedFiles) {
+    if (savedFileId) {
       try {
-        fileService.deleteFile(id);
-        await FileMetadataModel.deleteOne({ id });
+        fileService.deleteFile(savedFileId);
+        await FileMetadataModel.deleteOne({ id: savedFileId });
       } catch (cleanupError) {
-        console.error(`[Social image] Failed to clean up incomplete upload ${id}.`, cleanupError);
+        console.error(`[Social image] Failed to clean up incomplete upload ${savedFileId}.`, cleanupError);
       }
     }
-    const message = error instanceof Error ? error.message : 'Social image processing failed.';
+    const message = error instanceof Error ? error.message : 'Social image upload failed.';
     const status = message.includes('10 MB or smaller') ? 413 : 422;
     res.status(status).json({ success: false, error: message });
   }
@@ -171,38 +143,33 @@ socialPreviewRouter.get('/asset/:id', async (req: AuthenticatedRequest, res: Res
       $or: [{ originalId: req.params.id }, { 'variants.fileId': req.params.id }],
     }).lean();
     if (!asset) {
-      res.status(404).json({ success: false, error: 'Generated social image variants were not found.' });
+      res.status(404).json({ success: false, error: 'Social image metadata was not found.' });
       return;
     }
-    const original = await FileMetadataModel.findOne({ id: asset.originalId }).select('id name').lean();
+    const selectedVariant = asset.variants.find((variant) => variant.fileId === req.params.id);
+    const selectedId = selectedVariant?.fileId || asset.originalId;
+    const selectedFile = await FileMetadataModel.findOne({ id: selectedId }).select('id name').lean();
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({
       success: true,
       original: {
-        id: asset.originalId,
-        name: asset.originalName,
-        url: mediaUrl(asset.originalId),
-        contentType: asset.originalContentType,
-        format: asset.originalFormat,
-        width: asset.displayWidth,
-        height: asset.displayHeight,
-        encodedWidth: asset.originalWidth,
-        encodedHeight: asset.originalHeight,
-        sizeBytes: asset.originalSizeBytes,
-        orientation: asset.orientation,
-        animated: asset.animated,
-        storageName: original?.name,
+        id: selectedId,
+        name: selectedVariant?.fileId === selectedId ? selectedFile?.name || asset.originalName : asset.originalName,
+        url: mediaUrl(selectedId),
+        contentType: selectedVariant?.contentType || asset.originalContentType,
+        format: selectedVariant?.format || asset.originalFormat,
+        width: selectedVariant?.width || asset.displayWidth,
+        height: selectedVariant?.height || asset.displayHeight,
+        encodedWidth: selectedVariant ? selectedVariant.width : asset.originalWidth,
+        encodedHeight: selectedVariant ? selectedVariant.height : asset.originalHeight,
+        sizeBytes: selectedVariant?.sizeBytes || asset.originalSizeBytes,
+        orientation: selectedVariant ? 1 : asset.orientation,
+        animated: selectedVariant ? false : asset.animated,
+        storageName: selectedFile?.name,
       },
-      variants: asset.variants.map((variant) => ({ ...variant, url: mediaUrl(variant.fileId) })),
-      defaultVariant: asset.variants.find((variant) => variant.key === 'open-graph-jpeg')
-        ? {
-            ...asset.variants.find((variant) => variant.key === 'open-graph-jpeg'),
-            url: mediaUrl(asset.variants.find((variant) => variant.key === 'open-graph-jpeg')!.fileId),
-          }
-        : null,
     });
   } catch (error) {
-    console.error('[Social image] Could not load generated variants.', error);
-    res.status(503).json({ success: false, error: 'Generated social image variants are unavailable.' });
+    console.error('[Social image] Could not load image metadata.', error);
+    res.status(503).json({ success: false, error: 'Social image metadata is temporarily unavailable.' });
   }
 });

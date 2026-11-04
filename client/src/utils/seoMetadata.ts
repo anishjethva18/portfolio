@@ -4,6 +4,7 @@ export interface SeoContent {
     title?: unknown;
     bio?: unknown;
     avatar?: unknown;
+    website?: unknown;
   };
   siteSettings?: {
     siteName?: unknown;
@@ -11,22 +12,17 @@ export interface SeoContent {
     metaDescription?: unknown;
     faviconUrl?: unknown;
     socialImageUrl?: unknown;
-    socialPreviewUrl?: unknown;
     socialImageAlt?: unknown;
     socialImageWidth?: unknown;
     socialImageHeight?: unknown;
     socialImageType?: unknown;
-    openGraphTitle?: unknown;
-    openGraphDescription?: unknown;
     canonicalUrl?: unknown;
-    twitterCard?: unknown;
-    twitterTitle?: unknown;
-    twitterDescription?: unknown;
   };
 }
 
 export interface SeoMetadata {
   siteName: string;
+  alternateNames: string[];
   title: string;
   description: string;
   canonicalUrl: string;
@@ -38,7 +34,7 @@ export interface SeoMetadata {
   socialImageAlt: string;
   openGraphTitle: string;
   openGraphDescription: string;
-  twitterCard: 'summary' | 'summary_large_image';
+  twitterCard: 'summary_large_image';
   twitterTitle: string;
   twitterDescription: string;
 }
@@ -46,6 +42,24 @@ export interface SeoMetadata {
 const FALLBACK_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
 const loadedFavicons = new Set<string>();
 const faviconRequestIds = new WeakMap<HTMLLinkElement, number>();
+const FAVICON_MIME_TYPES: Record<string, string> = {
+  ico: 'image/x-icon',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+};
+
+function getFaviconMimeType(url: string): string | undefined {
+  try {
+    const extension = new URL(url).pathname.split('.').pop()?.toLowerCase();
+    return extension ? FAVICON_MIME_TYPES[extension] : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function safeText(value: unknown, fallback: string, maxLength: number): string {
   if (typeof value !== 'string') return fallback;
@@ -93,20 +107,13 @@ export function resolvePublicUrl(value: unknown, baseUrl: string, fallback: stri
 }
 
 export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetadata {
-  const profile = content.profile || {};
   const settings = content.siteSettings || {};
-  const profileName = safeText(profile.name, '', 160);
-  const profileTitle = safeText(profile.title, '', 160);
-  const profileBio = safeText(profile.bio, '', 320);
-  const siteName = safeText(settings.siteName, profileName, 160);
-  const titleFallback = profileName
-    ? `${profileName}${profileTitle ? ` | ${profileTitle}` : ''}`
-    : '';
-  const title = safeText(settings.siteTitle, titleFallback, 120);
-  const description = safeText(settings.metaDescription, profileBio, 320);
+  const siteName = safeText(settings.siteName, '', 160);
+  const title = safeText(settings.siteTitle, '', 120);
+  const description = safeText(settings.metaDescription, '', 320);
   const canonicalUrl = resolvePublicUrl(settings.canonicalUrl, baseUrl, '');
   const faviconUrl = resolvePublicUrl(settings.faviconUrl, baseUrl, '');
-  const socialImageUrl = resolvePublicUrl(settings.socialPreviewUrl ?? settings.socialImageUrl, baseUrl, '');
+  const socialImageUrl = resolvePublicUrl(settings.socialImageUrl, baseUrl, '');
   const socialImageWidth = typeof settings.socialImageWidth === 'number' && Number.isSafeInteger(settings.socialImageWidth) && settings.socialImageWidth > 0
     ? settings.socialImageWidth
     : null;
@@ -117,13 +124,11 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
     ? settings.socialImageType
     : '';
   const socialImageAlt = safeText(settings.socialImageAlt, socialImageUrl ? `${siteName} social sharing image` : '', 300);
-  const openGraphTitle = safeText(settings.openGraphTitle, title, 120);
-  const openGraphDescription = safeText(settings.openGraphDescription, description, 320);
-  const configuredTwitterCard = safeText(settings.twitterCard, 'summary_large_image', 32);
-  const twitterCard = configuredTwitterCard === 'summary' ? 'summary' : 'summary_large_image';
+  const twitterCard = 'summary_large_image';
 
   return {
     siteName,
+    alternateNames: siteName ? [`${siteName} Portfolio`] : [],
     title,
     description,
     canonicalUrl,
@@ -133,11 +138,11 @@ export function buildSeoMetadata(content: SeoContent, baseUrl: string): SeoMetad
     socialImageHeight,
     socialImageType,
     socialImageAlt,
-    openGraphTitle,
-    openGraphDescription,
+    openGraphTitle: title,
+    openGraphDescription: description,
     twitterCard,
-    twitterTitle: safeText(settings.twitterTitle, openGraphTitle, 120),
-    twitterDescription: safeText(settings.twitterDescription, openGraphDescription, 320),
+    twitterTitle: title,
+    twitterDescription: description,
   };
 }
 
@@ -216,17 +221,7 @@ function applyFavicon(url: string, targetDocument: Document): void {
     if (faviconRequestIds.get(icon) !== requestId) return;
     loadedFavicons.add(faviconUrl);
     icon.href = faviconUrl;
-    const extension = new URL(faviconUrl).pathname.split('.').pop()?.toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      ico: 'image/x-icon',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      webp: 'image/webp',
-      gif: 'image/gif',
-      svg: 'image/svg+xml',
-    };
-    const mimeType = extension ? mimeTypes[extension] : undefined;
+    const mimeType = getFaviconMimeType(faviconUrl);
     if (mimeType) icon.type = mimeType;
     else icon.removeAttribute('type');
   };
@@ -294,12 +289,15 @@ export function applySeoMetadata(content: SeoContent, baseUrl: string, targetDoc
       return script;
     },
   );
-  const websiteData: Record<string, string> = {
+  const websiteData: Record<string, string | string[]> = {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: metadata.siteName,
     url: metadata.canonicalUrl,
   };
+  if (metadata.alternateNames.length) {
+    websiteData.alternateName = metadata.alternateNames;
+  }
   structuredData.textContent = JSON.stringify(websiteData).replace(/</g, '\\u003c');
 
   return metadata;
@@ -379,10 +377,13 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
     /<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/gi,
     `<link rel="canonical" href="${escapeAttribute(metadata.canonicalUrl)}" data-seo="canonical" />`,
   );
+  const initialFaviconType = metadata.faviconUrl
+    ? getFaviconMimeType(metadata.faviconUrl)
+    : 'image/svg+xml';
   output = replaceHeadTag(
     output,
     /<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*>/gi,
-    `<link rel="icon" href="${FALLBACK_FAVICON}" type="image/svg+xml" data-seo="icon" data-configured-favicon="${escapeAttribute(metadata.faviconUrl)}" />`,
+    `<link rel="icon" href="${escapeAttribute(metadata.faviconUrl || FALLBACK_FAVICON)}"${initialFaviconType ? ` type="${escapeAttribute(initialFaviconType)}"` : ''} data-seo="icon"${metadata.faviconUrl ? ` data-configured-favicon="${escapeAttribute(metadata.faviconUrl)}"` : ''} />`,
   );
   output = replaceHeadTag(
     output,
@@ -396,6 +397,7 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: metadata.siteName,
+    ...(metadata.alternateNames.length ? { alternateName: metadata.alternateNames } : {}),
     url: metadata.canonicalUrl,
   };
   const jsonLdHtml = `<script id="website-jsonld" type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>`;

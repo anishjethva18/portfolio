@@ -41,6 +41,9 @@ export function isPortfolioDataMutation(path: string, method: string) {
   if (/^\/api\/auth\//i.test(path) || /^\/api\/analytics\//i.test(path)) return false;
   // Uploading a media file alone does not publish portfolio data. The editor
   // emits portfolio-media-changed after linking it to a draft field.
-  if (/^\/api\/files\/(?:portfolio-media|upload)(?:\/|$)/i.test(path)) return false;
+  if (
+    /^\/api\/files\/(?:portfolio-media|upload)(?:\/|$)/i.test(path) ||
+    /^\/api\/admin\/social-preview\/upload(?:\/|$)/i.test(path)
+  ) return false;
   return /^\/api\//i.test(path);
 }

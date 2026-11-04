@@ -1,4 +1,4 @@
-# Production Deployment Guide
+# Complete Production Deployment Guide
 
 This guide covers deploying the project in this folder:
 
@@ -9,6 +9,10 @@ E:\College\portfolio\windows-11-os-portfolio-local
 It documents the repository as inspected; it does not deploy the site or change
 application configuration. Follow the project-specific notes, especially the
 existing Netlify API proxy target and the file-storage and PWA limitations.
+
+This is the single deployment guide for the project. It covers GitHub,
+MongoDB Atlas, Render, Netlify, environment variables, storage, SEO, email,
+verification, troubleshooting, and rollback.
 
 ## 1. Project architecture
 
@@ -105,6 +109,13 @@ keys, MongoDB URIs, local database files, or uploaded/private storage.
 
 ### 2.2 Commit and connect the repository
 
+For a first deployment, create an empty GitHub repository (do not initialize
+it with a second README or `.gitignore`). If Git is not installed on Windows,
+install Git for Windows and reopen PowerShell. From this repository root,
+check whether Git is already initialized before using `git init`; do not
+initialize a parent folder by mistake. Configure your Git author identity with
+your own name and email if needed.
+
 After confirming the staged files contain no secrets:
 
 ```powershell
@@ -122,6 +133,19 @@ used for production. A new push to the configured branch normally triggers a
 new build/deploy; inspect each provider's deploy log and status rather than
 assuming a successful Git push means deployment succeeded. Pull requests can
 be used for previews if enabled in each service's settings.
+
+For later updates, rerun the relevant tests, typechecks, and builds from the
+repository root before committing. A typical full validation is:
+
+```powershell
+git diff --check
+npm --prefix server run test:email
+npm --prefix server run test:seo-metadata
+npm --prefix server run typecheck
+npm --prefix server run build
+npm --prefix client run typecheck
+npm --prefix client run build
+```
 
 ### 2.3 Prevent and recover from secret leaks
 
@@ -483,6 +507,27 @@ provider/receiver diagnostics and is not an end-user readiness check. Do not
 publish or share its output; review that endpoint's visibility before relying
 on it in a public deployment.
 
+### Local email favicon test
+
+Email clients cannot fetch `localhost` from your computer. To test a local
+backend's email favicon, expose it temporarily through a public HTTPS tunnel:
+
+1. Start the local API on port `3000` (or use the actual configured API port).
+2. In a separate PowerShell window, start Cloudflare Quick Tunnel:
+
+   ```powershell
+   cloudflared tunnel --url http://localhost:3000
+   ```
+
+3. Set `EMAIL_PUBLIC_BASE_URL` in `server/.env` to the tunnel's HTTPS origin,
+   restart the backend, and keep the tunnel running.
+4. Open
+   `https://<TUNNEL_HOST>/api/email/favicon?id=<PUBLISHED_FAVICON_FILE_ID>`
+   without logging in and confirm it returns the image.
+5. Send a new test email and verify its remote favicon URL. Stop the tunnel
+   after testing; it is temporary and exposes the local API publicly while
+   running.
+
 ## 8. Authentication and admin panel
 
 - Production startup validates `ADMIN_EMAIL`, `MONGODB_URI`, HTTPS `APP_URL`,
@@ -570,6 +615,20 @@ for the core portfolio/API startup.
 - Keep Atlas backups and file-storage backups separate; restoring one does not
   automatically restore the other.
 
+### Moving existing local content to production
+
+A new Render service does not automatically copy local MongoDB data or
+`server/storage/`. Use the Admin Panel's supported backup and restore workflow:
+
+1. Create a backup from the local Admin Panel and keep it in a secure location.
+2. Restore it through the deployed Admin Panel's Backup & Restore feature.
+3. Confirm published and draft content, projects, and referenced media are
+   present. The compact admin JSON backup does not include contacts, analytics,
+   audit/revision history, or unreferenced media; use a MongoDB backup/export
+   and separate private-file backup when those records are required.
+4. Verify images, favicon, social preview, resumes, and other uploads after
+   restore. Do not upload local database files or `server/storage/` to GitHub.
+
 ### PWA status
 
 The inspected client has no web app manifest or active service-worker setup.
@@ -610,6 +669,29 @@ currently provides a PWA.
       endpoints reach Render; no CORS, mixed-content, or incorrect-host errors
       appear in the browser console/network panel.
 - [ ] `APP_URL` and `CORS_ALLOWED_ORIGINS` match the deployed HTTPS origin(s).
+
+### Published SEO, branding, and public media
+
+- [ ] Admin Panel published Site Details and Images & Favicon settings are the
+      source of truth; drafts are not exposed in public metadata.
+- [ ] Fetch the raw homepage HTML and confirm the published title, description,
+      canonical link, Open Graph tags, Twitter tags, favicon `rel="icon"` URL,
+      and WebSite JSON-LD are present before JavaScript executes.
+- [ ] Confirm WebSite JSON-LD `name`, `alternateName`, and `url` match the
+      published site name and canonical URL.
+- [ ] Confirm the published favicon URL is absolute/public, returns HTTP 200
+      with the correct image content type, is square and at least 48×48 pixels,
+      and does not require authentication.
+- [ ] Check `robots.txt` and `sitemap.xml` from the public site. Keep sitemap,
+      canonical metadata, and the intended primary domain consistent.
+- [ ] Test the homepage and favicon with a Googlebot user agent. A successful
+      request verifies access, but does not guarantee Google's chosen search
+      title, snippet, site name, or favicon.
+- [ ] If the Netlify hostname should redirect to a custom domain, first verify
+      the custom domain is configured and resolves to this Netlify site. Do not
+      add a redirect or change canonical settings based on an unverified domain.
+- [ ] After a deploy that changes SEO rendering, request re-indexing in Google
+      Search Console if available; Google controls when and how results update.
 
 ### Authentication and email
 
@@ -670,6 +752,7 @@ currently provides a PWA.
 | Uploaded file/preview disappears after deploy or restart | File bytes are on ephemeral instance storage, file exceeds database-backed media limit, or storage path changed | Check Render instance plan/disk mount, `PORTFOLIO_STORAGE_DIR`, file record, and logs | Attach eligible persistent storage or use durable object storage; copy existing files and metadata safely, then test after redeploy |
 | `npm ci` reports lockfile/package mismatch | Manifest and lockfile changed inconsistently or deployment uses wrong directory | Compare `package.json` and `package-lock.json` in the same package directory | Regenerate/commit the correct lockfile locally, test `npm ci`, then push; do not edit the production install command to ignore the lockfile |
 | Service is slow on first visit after inactivity | Free service cold start/spin-down | Compare request time and Render instance/deploy events with current plan documentation | Use an always-on plan or another hosting option if cold-start delay is unacceptable |
+| Google shows the hosting provider, an old title/snippet, or an old favicon | Canonical/site identity is inconsistent, initial HTML lacks the published value, favicon is not directly linked or publicly fetchable, or Google has not recrawled | Inspect raw homepage HTML and JSON-LD, `/api/seo-metadata`, favicon response, canonical, `robots.txt`, and `sitemap.xml` using an unauthenticated Googlebot request | Correct the published Admin settings/domain configuration, deploy the SEO edge-function change to Netlify, verify the live response, then request recrawling; Google controls final presentation and timing |
 
 When sharing diagnostic output, redact credentials, complete database URIs,
 session cookies, CSRF tokens, reset URLs, email addresses where private, and
@@ -701,6 +784,13 @@ Follow this order so the frontend is not pointed at an unready backend:
    security.
 10. **Document rollback and recovery.** Record the last known-good Git commit,
     Render deploy, Netlify deploy, Atlas backup, and file backup location.
+
+For a frontend-only SEO or initial-HTML metadata change, a Netlify deploy is
+required. Deploy Render first only when backend/API code or backend
+configuration changes; after it is healthy, deploy Netlify if its proxy,
+redirects, edge function, or frontend build also changed. For a database/API
+change that depends on a new backend route, deploy and verify Render before
+deploying the frontend that calls it.
 
 ### Rollback procedure
 
