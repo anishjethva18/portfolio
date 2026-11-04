@@ -4,6 +4,8 @@ This document provides a complete inventory of all Express routes, controllers, 
 
 > `server/routes/portfolio.ts` exports a legacy `/api/portfolio/projects` router for isolated tests and compatibility assessment, but it is not mounted by `server/server.ts`. The active public projects API is `/api/projects`; do not treat the legacy route as a production endpoint or remove it until external integrations are checked.
 
+The public frontend page `/privacy-policy` is a client route, not an Express API endpoint; Netlify's single-page-app fallback serves it on direct navigation and refresh. Its implementation and data-handling explanation are in [`client/src/pages/PrivacyPolicy.tsx`](../../client/src/pages/PrivacyPolicy.tsx).
+
 ---
 
 ## Authorization Tiers

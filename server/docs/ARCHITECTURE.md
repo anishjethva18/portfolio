@@ -8,6 +8,8 @@ The React and TypeScript client lives in `client/src/`; `client/public/` contain
 
 The Admin Panel is part of the Windows desktop application, with focused admin components under `client/src/components/apps/`. `/admin/preview` is a protected standalone route that retrieves only saved admin drafts and renders a read-only portfolio preview; it does not change published content.
 
+`client/src/pages/PrivacyPolicy.tsx` provides the public `/privacy-policy` page. `App.tsx` renders it before mounting the desktop, lock-screen, or authentication providers, so it remains accessible without an admin session. Netlify's SPA fallback serves the app shell for direct navigation and refreshes on that path. Keep the visitor-facing page aligned with actual contact, analytics, email, and retention behavior; see [Analytics privacy and retention](../../docs/privacy/analytics-privacy.md).
+
 The Windows desktop's file views are a virtual file system, not direct access to the host computer. `client/src/hooks/useVirtualDDriveFiles.ts` combines local OS-context files with generated references to published portfolio content and projects. File Explorer and Notepad's Open/Save dialogs share this view; C: remains a simulated, restricted drive. Notepad filters its dialogs to text, Markdown, and supported programming formats.
 
 ## Server: `server/`

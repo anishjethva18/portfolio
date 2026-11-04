@@ -18,7 +18,7 @@ verification, troubleshooting, and rollback.
 
 | Area | Project location | Role |
 | --- | --- | --- |
-| React + Vite frontend | `client/` | Windows-style portfolio UI and browser-side API calls |
+| React + Vite frontend | `client/` | Windows-style portfolio UI, public `/privacy-policy` route, and browser-side API calls |
 | Express + TypeScript backend | `server/` | REST API, admin/authentication, contact/email, search, and file handling |
 | MongoDB models/configuration | `server/models/`, `server/config/dbConfig.ts` | Persistent portfolio content, admin sessions, contacts, analytics, metadata, and other collections |
 | Netlify configuration | `netlify.toml` | Frontend build, SEO edge function, `/api/*` proxy, and single-page-app fallback |
@@ -38,7 +38,7 @@ flowchart LR
     Netlify[Netlify: React/Vite static site]
     Render[Render: Node/Express API]
     Atlas[(MongoDB Atlas: portfolio database)]
-    Mail[Resend API or SMTP provider]
+    Mail[Gmail OAuth, Resend API, or SMTP provider]
     Gemini[Google Gemini API, optional]
     Disk[Render persistent disk or external file storage, optional]
 
@@ -56,6 +56,8 @@ flowchart LR
 ### Request flow
 
 1. A browser loads the built static site from Netlify.
+   The public `/privacy-policy` route is rendered by the React client outside
+   the desktop and administrator authentication flow.
 2. The client sends requests to relative paths such as `/api/auth/login`,
    `/api/contact`, and `/api/portfolio-content`; no client API-base environment
    variable was found in the frontend source.
@@ -319,7 +321,8 @@ Base directory: repository root; Package directory: client
 3. Add the same origin to `CORS_ALLOWED_ORIGINS` if it is not already covered
    by `APP_URL`; list multiple origins comma-separated, with no paths.
 4. Test a direct browser refresh on a nested frontend route. The existing
-   `/* -> /index.html` redirect is intended to support client-side routing.
+   `/* -> /index.html` redirect is intended to support client-side routing;
+   verify `/privacy-policy` as well as any admin route.
 5. Test a browser API call and verify the corresponding request appears under
    the Netlify `/api/` path and reaches the intended Render service.
 
@@ -693,6 +696,10 @@ currently provides a PWA.
 - [ ] Test the homepage and favicon with a Googlebot user agent. A successful
       request verifies access, but does not guarantee Google's chosen search
       title, snippet, site name, or favicon.
+- [ ] Open `/privacy-policy` directly and refresh while logged out. Confirm the
+      public page loads without entering the Windows desktop or admin login.
+      Keep its descriptions of contact data, analytics retention, and email
+      providers consistent with the implementation and verified deployment.
 - [ ] If the Netlify hostname should redirect to a custom domain, first verify
       the custom domain is configured and resolves to this Netlify site. Do not
       add a redirect or change canonical settings based on an unverified domain.

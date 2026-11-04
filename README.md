@@ -23,6 +23,8 @@
 ## ✨ At a glance
 
 This is an interactive portfolio presented as a Windows 11-inspired desktop. Visitors can explore portfolio apps, open and arrange windows, and use the built-in tools. A separate administrator workspace manages portfolio content and publishes updates without replacing the desktop experience.
+The public [Privacy Policy](client/src/pages/PrivacyPolicy.tsx) is available at
+[`/privacy-policy`](https://anishjethva.netlify.app/privacy-policy).
 
 | 🖥️ Interactive desktop                                                                           | 📁 Native-feeling apps                                                                                   | 🛠️ Private admin workspace                                                                                |
 | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -37,8 +39,9 @@ This is an interactive portfolio presented as a Windows 11-inspired desktop. Vis
 - Notepad Open/Save dialogs use the shared virtual D: contents and support text, Markdown, and programming-file formats; the simulated C: drive is shown as restricted.
 - Opening an app dismisses the Widgets board. The Settings About page links to About, Projects, and Contact in that order.
 - MongoDB-backed portfolio content, project drafts, revisions, user accounts, and analytics.
+- Public Privacy Policy page at `/privacy-policy`, outside the desktop and admin-authentication flow.
 - Server-side administrator authentication with HttpOnly session cookies, CSRF checks, and Argon2id password hashes.
-- Optional Gemini-powered features and SMTP email delivery.
+- Optional Gemini-powered features and Gmail OAuth, SMTP, or Resend email delivery.
 - API health checks, audit history, manual backup and restore, and protected media handling.
 
 </details>
@@ -51,7 +54,7 @@ This is an interactive portfolio presented as a Windows 11-inspired desktop. Vis
 | Server                | Node.js, Express 4, TypeScript               |
 | Database              | MongoDB, Mongoose                            |
 | UI and visualization  | Motion, Lucide, Recharts                     |
-| Optional integrations | Google Gemini API, SMTP email                |
+| Optional integrations | Google Gemini API, Gmail OAuth/SMTP, Resend |
 
 ## 🗺️ How it fits together
 
@@ -64,7 +67,7 @@ Visitor
                 │      ├── Private admin drafts and revisions
                 │      └── Accounts, contacts, and analytics
                 ├──► Protected file and media storage
-                └──► Optional Gemini and SMTP integrations
+                └──► Optional Gemini and configured email integrations
 ```
 
 Portfolio edits are saved privately as drafts. Publishing makes the draft public and records the previous published version. Restoring a revision changes the draft first; an administrator must publish it separately.
@@ -76,6 +79,7 @@ Portfolio edits are saved privately as drafts. Publishing makes the draft public
 ```text
 client/
   src/components/          Desktop, portfolio apps, and admin interface
+  src/pages/               Public standalone pages, including Privacy Policy
   src/context/             Authentication and operating-system state
   src/data/                Initial portfolio and desktop data
   src/hooks/               Shared client data hooks, including virtual D: content

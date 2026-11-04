@@ -17,6 +17,7 @@ import { ConfirmDialogProvider } from './context/ConfirmDialogContext';
 import { applyConfiguredFavicon, applySeoMetadata } from './utils/seoMetadata';
 import { Construction, ShieldCheck, Clock3, Sparkles } from 'lucide-react';
 import { getAdminShortcut, matchesAdminShortcut } from './utils/adminShortcut';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 
 const OSMainContent: React.FC = () => {
   const { windows, isBsod, powerState, settings, currentDesktopId, openApp, applyPublishedAppLayout } = useOS();
@@ -312,6 +313,10 @@ const OSMainContent: React.FC = () => {
 };
 
 export default function App() {
+  if (window.location.pathname.replace(/\/+$/, '') === '/privacy-policy') {
+    return <PrivacyPolicy />;
+  }
+
   return (
     <AuthProvider>
       <OSProvider>

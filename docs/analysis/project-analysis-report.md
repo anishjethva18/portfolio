@@ -7,6 +7,8 @@
 
 > Ratings below are engineering estimates from source/build inspection, not Lighthouse results, a load test, penetration test, or security certification. Runtime behavior also depends on MongoDB, hosting, network, and browser/device.
 
+> **Current follow-up (4 November 2026):** The visitor-facing Privacy Policy is implemented at `/privacy-policy`; see [the policy page](../../client/src/pages/PrivacyPolicy.tsx) and [analytics privacy and retention](../privacy/analytics-privacy.md). This current documentation supersedes the initial review's 90-day analytics-retention statement: application analytics currently have no automatic expiry and are cleared through the administrator reset action. The dated findings below remain a record of the original review, not current runtime status.
+
 ## 1. Executive summary
 
 This is a substantial full-stack portfolio presented as a Windows-inspired desktop. It contains a React/TypeScript client, an Express/Mongoose API, MongoDB-backed publishing and administrator workflows, local persistent media and backup storage, and optional Gemini/SMTP integrations.

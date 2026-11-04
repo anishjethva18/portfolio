@@ -12,7 +12,7 @@ For production, provide secrets through the hosting platform's secret or environ
 - The production Content Security Policy restricts scripts to the application origin and limits API connections to the application and the weather providers used by the client. The embedded browsing proxy has a separate sandbox policy.
 - Set `TRUST_PROXY_HOPS` to the exact number of trusted reverse proxies in front of Express. Leave it at `0` unless the hosting topology is known; forwarded IP headers are otherwise untrusted.
 - Sensitive endpoint rate limits are stored in MongoDB, shared across server instances, and fail closed with HTTP 503 if the rate-limit store is unavailable. Ensure the production database is reachable and permits index creation.
-- Request analytics retain only the configured 90-day window; MongoDB TTL cleanup is asynchronous. Analytics query values that can contain credentials, including URLs, are redacted.
+- Portfolio analytics have no automatic expiry configured; administrators can clear the event set through the protected analytics reset endpoint. The dashboard's selectable 7/14/30/90-day activity range is a view filter, not a retention policy. Analytics query values that can contain credentials, including URLs, are redacted. See [analytics privacy and retention](../../docs/privacy/analytics-privacy.md).
 
 ## Uploads and backups
 

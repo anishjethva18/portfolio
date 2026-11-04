@@ -2,6 +2,8 @@
 
 Server-specific implementation and operations documentation lives here. For the project overview and setup, see the root [README](../../README.md); for deployment and privacy references, see the [project documentation index](../../docs/README.md).
 
+The public `/privacy-policy` route is part of the client, not an Express API route. Its implementation and visitor-facing data explanation are linked from the [project documentation index](../../docs/README.md).
+
 | Document | Purpose |
 | --- | --- |
 | [Architecture](ARCHITECTURE.md) | Client/server layout, runtime data flow, storage, and common commands. |
