@@ -677,6 +677,10 @@ currently provides a PWA.
 - [ ] Fetch the raw homepage HTML and confirm the published title, description,
       canonical link, Open Graph tags, Twitter tags, favicon `rel="icon"` URL,
       and WebSite JSON-LD are present before JavaScript executes.
+- [ ] Simulate Meta's crawler with `Range: bytes=0-524288`; the rewritten
+      homepage must return a complete HTTP 200 response with no stale
+      `Content-Range` or `Accept-Ranges` headers, and all Open Graph tags must
+      be present in that response.
 - [ ] Confirm WebSite JSON-LD `name`, `alternateName`, and `url` match the
       published site name and canonical URL.
 - [ ] Confirm the published favicon URL is absolute/public, returns HTTP 200
@@ -753,6 +757,7 @@ currently provides a PWA.
 | `npm ci` reports lockfile/package mismatch | Manifest and lockfile changed inconsistently or deployment uses wrong directory | Compare `package.json` and `package-lock.json` in the same package directory | Regenerate/commit the correct lockfile locally, test `npm ci`, then push; do not edit the production install command to ignore the lockfile |
 | Service is slow on first visit after inactivity | Free service cold start/spin-down | Compare request time and Render instance/deploy events with current plan documentation | Use an always-on plan or another hosting option if cold-start delay is unacceptable |
 | Google shows the hosting provider, an old title/snippet, or an old favicon | Canonical/site identity is inconsistent, initial HTML lacks the published value, favicon is not directly linked or publicly fetchable, or Google has not recrawled | Inspect raw homepage HTML and JSON-LD, `/api/seo-metadata`, favicon response, canonical, `robots.txt`, and `sitemap.xml` using an unauthenticated Googlebot request | Correct the published Admin settings/domain configuration, deploy the SEO edge-function change to Netlify, verify the live response, then request recrawling; Google controls final presentation and timing |
+| Facebook/Meta crawler sometimes misses Open Graph tags | The homepage rewrite preserves a partial-content status or stale range headers after changing the HTML body | Request `/` with `Range: bytes=0-524288` and the `facebookexternalhit/1.1` user agent; check status, `Content-Range`, and whether OG tags are present | Deploy the Netlify SEO edge function that converts rewritten partial HTML to a complete 200 response and removes range headers; then force a re-scrape in Meta Sharing Debugger |
 
 When sharing diagnostic output, redact credentials, complete database URIs,
 session cookies, CSRF tokens, reset URLs, email addresses where private, and

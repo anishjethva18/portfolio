@@ -39,10 +39,13 @@ export async function renderHomepageMetadata(request: Request, context: EdgeCont
     const headers = new Headers(response.headers);
     headers.delete('content-length');
     headers.delete('content-encoding');
+    headers.delete('content-range');
+    headers.delete('accept-ranges');
     headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    const status = response.status === 206 ? 200 : response.status;
     return new Response(htmlWithMetadata, {
-      status: response.status,
-      statusText: response.statusText,
+      status,
+      statusText: status === 200 && response.status === 206 ? 'OK' : response.statusText,
       headers,
     });
   } catch (error) {

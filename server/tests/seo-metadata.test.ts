@@ -324,6 +324,50 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
   }
 });
 
+test('Netlify returns rewritten metadata as a complete response for Meta range requests', async () => {
+  const originalFetch = globalThis.fetch;
+  const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    success: true,
+    published: true,
+    content: publishedContent,
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const response = await renderHomepageMetadata(
+      new Request('https://portfolio.example.test/', {
+        headers: {
+          Range: 'bytes=0-524288',
+          'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        },
+      }),
+      {
+        next: async () => new Response(html, {
+          status: 206,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Range': `bytes 0-${html.length - 1}/${html.length}`,
+            'Accept-Ranges': 'bytes',
+          },
+        }),
+      },
+    );
+    const rendered = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.has('content-range'), false);
+    assert.equal(response.headers.has('accept-ranges'), false);
+    assert.equal(response.headers.has('content-length'), false);
+    assert.match(rendered, /property="og:site_name" content="Published Site Name"/);
+    assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/file-original-social-image"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Netlify returns clean HTML when the published SEO record does not exist', async () => {
   const originalFetch = globalThis.fetch;
   const html = await readFile(new URL('../../client/index.html', import.meta.url), 'utf8');
