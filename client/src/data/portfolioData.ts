@@ -1,4 +1,4 @@
-import { AppMetadata, ExperienceItem, EducationItem, ProjectData } from '../types';
+import type { AppMetadata, ExperienceItem, EducationItem, ProjectData } from '../types.ts';
 
 export const PORTFOLIO_USER = {
   name: 'Anish Jethva',

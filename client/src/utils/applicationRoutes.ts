@@ -1,5 +1,5 @@
-import { APPS_LIST } from '../data/portfolioData';
-import type { AppId, AppMetadata } from '../types';
+import { APPS_LIST } from '../data/portfolioData.ts';
+import type { AppId, AppMetadata } from '../types.ts';
 
 export const APPLICATION_ROUTE_SLUGS: Record<AppId, string> = {
   about: 'about-me',

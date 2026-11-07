@@ -1,4 +1,4 @@
-import { getApplicationRoute } from './applicationRoutes';
+import { getApplicationRoute } from './applicationRoutes.ts';
 
 export interface SeoContent {
   profile?: {
