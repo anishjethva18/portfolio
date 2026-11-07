@@ -4,6 +4,7 @@ export interface IUser extends Document {
   id: string;
   email: string;
   passwordHash: string;
+  bootstrapAdmin?: boolean;
   name: string;
   role: 'admin' | 'user' | 'guest';
   disabled: boolean;
@@ -25,6 +26,7 @@ const UserSchema = new Schema<IUser>(
     id: { type: String, required: true, unique: true, index: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
     passwordHash: { type: String, required: true },
+    bootstrapAdmin: { type: Boolean, select: false },
     name: { type: String, required: true, trim: true },
     role: { type: String, enum: ['admin', 'user', 'guest'], default: 'user' },
     disabled: { type: Boolean, default: false, index: true },

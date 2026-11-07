@@ -553,10 +553,10 @@ backend's email favicon, expose it temporarily through a public HTTPS tunnel:
 - First-login bootstrap: when the MongoDB database contains no Admin, set
   `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` in Render's backend environment,
   deploy/restart, then sign in through the existing Admin login screen. The
-  backend creates one Admin and stores an Argon2id hash. After creation,
-  database credentials remain authoritative; environment changes do not
-  replace or bypass the account. Remove `ADMIN_PASSWORD` if you do not want
-  first-login bootstrap to become available after an intentional deletion.
+  backend creates the initial Admin and stores an Argon2id hash. After
+  creation, database credentials remain authoritative; environment changes do
+  not replace or bypass existing accounts. This mechanism only bootstraps the
+  initial Admin; use the authenticated Users section to add more Admins.
 - Script bootstrap alternative: `server/package.json` exposes
   `bootstrap:admin` and `create-admin`. The script requires `ADMIN_EMAIL`, a
   matching email, a one-time `ADMIN_SETUP_TOKEN` in production, and a
@@ -565,16 +565,17 @@ backend's email favicon, expose it temporarily through a public HTTPS tunnel:
   password securely, then remove the one-off password from the process
   environment and remove/rotate the setup token when no longer needed. Never
   create or document a default production password.
-- Startup creates the MongoDB `unique_single_admin_by_role` partial unique
-  index after checking existing Admin records. It preserves an existing Admin
-  and fails startup if multiple Admins are found; it never deletes or demotes
-  accounts to resolve a conflict. The production database user must have
-  permission to create indexes. Verify the index in Atlas after startup.
-- If the sole Admin is intentionally deleted, either bootstrap method can be
-  used again only when its required, valid credentials are configured. Admin
-  self-deletion is blocked in the application; do not delete the live account
-  as a routine credential-recovery method. Use the existing password-reset
-  flow instead.
+- Startup creates the MongoDB `unique_bootstrap_admin` partial unique index
+  on an internal marker to coordinate competing initial bootstrap attempts;
+  it does not limit the number of Admins created through account management.
+  Existing Admin records are preserved, and startup supports databases that
+  already contain multiple Admins. The production database user must have
+  permission to create and drop indexes. Verify the index in Atlas after
+  startup.
+- The CLI script refuses to create the initial account when any Admin already
+  exists. Use the Admin Panel Users section to add subsequent Admins. Admin
+  self-deletion is blocked in the application; use the existing password-reset
+  flow for routine account recovery.
 - Password reset uses the configured email provider. Test the complete
   request/reset flow before go-live.
 

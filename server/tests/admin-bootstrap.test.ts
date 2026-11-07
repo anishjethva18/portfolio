@@ -8,11 +8,11 @@ import { requireAdmin } from '../middleware/auth';
 import { UserModel, PasswordResetTokenModel } from '../models';
 import { adminRouter } from '../routes/admin';
 import { authRouter } from '../routes/auth';
-import { authService } from '../services/authService';
+import { AuthService, authService } from '../services/authService';
 import { emailService } from '../services/emailService';
 import { SessionHistoryModel, SessionModel } from '../models';
 
-test('environment bootstrap creates one admin atomically and never bypasses later database authentication', async () => {
+test('environment bootstrap is atomic, database-authoritative, and supports additional managed admins', async () => {
   const savedEnvironment = {
     ADMIN_EMAIL: process.env.ADMIN_EMAIL,
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
@@ -23,6 +23,18 @@ test('environment bootstrap creates one admin atomically and never bypasses late
   await db.initMongoSync();
   await UserModel.deleteMany({});
   db.users.clear();
+  await UserModel.collection.createIndex(
+    { role: 1 },
+    {
+      unique: true,
+      partialFilterExpression: { role: 'admin' },
+      name: 'unique_single_admin_by_role',
+    },
+  );
+  await authService.ensureBootstrapAdminConstraint();
+  const upgradedIndexes = await UserModel.collection.indexes();
+  assert.ok(upgradedIndexes.some((index) => index.name === 'unique_bootstrap_admin'));
+  assert.equal(upgradedIndexes.some((index) => index.name === 'unique_single_admin_by_role'), false);
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -34,6 +46,7 @@ test('environment bootstrap creates one admin atomically and never bypasses late
   assert.ok(address && typeof address !== 'string');
   const baseUrl = `http://127.0.0.1:${address.port}`;
   let adminId = '';
+  let secondAdminId = '';
 
   const login = async (email: string, password: string) => fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
@@ -80,21 +93,6 @@ test('environment bootstrap creates one admin atomically and never bypasses late
     assert.equal('passwordHash' in firstLoginPayload.user, false);
     assert.equal(JSON.stringify(firstLoginPayload).includes(bootstrapPassword), false);
 
-    await assert.rejects(
-      UserModel.create({
-        id: 'second-admin-test',
-        email: 'second-admin-test@example.test',
-        passwordHash: await authService.hashPassword('AnotherSecurePassword123!'),
-        name: 'Second Admin',
-        role: 'admin',
-        disabled: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-      (error: { code?: number }) => error.code === 11000,
-      'MongoDB unique role index prevents another admin even if inserted outside the login path',
-    );
-
     const changedEmail = 'changed-admin@example.test';
     const changedPassword = 'ChangedSecurePassword123!';
     process.env.ADMIN_EMAIL = changedEmail;
@@ -133,13 +131,52 @@ test('environment bootstrap creates one admin atomically and never bypasses late
       headers: authHeaders,
       body: JSON.stringify({ email: 'second-admin@example.test', password: 'AnotherSecurePassword123!' }),
     });
-    assert.equal(additionalAdmin.status, 409);
+    assert.equal(additionalAdmin.status, 422, 'managed Admin creation validates required account name');
+    const createdAdmin = await fetch(`${baseUrl}/api/admin/users`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: 'Second Admin',
+        email: 'second-admin@example.test',
+        password: 'AnotherSecurePassword123!',
+        role: 'admin',
+      }),
+    });
+    assert.equal(createdAdmin.status, 201, 'authenticated Admin can create another administrator from Users');
+    const createdAdminPayload = await createdAdmin.json() as { user: { id: string; email: string; role: string } };
+    secondAdminId = createdAdminPayload.user.id;
+    assert.equal(createdAdminPayload.user.role, 'admin');
+    assert.equal(await UserModel.countDocuments({ role: 'admin' }), 2);
+    const bootstrapIndexes = await UserModel.collection.indexes();
+    assert.ok(bootstrapIndexes.some((index) => index.name === 'unique_bootstrap_admin'));
+    await new AuthService().ensureBootstrapAdminConstraint();
+    const secondAdminLogin = await login('second-admin@example.test', 'AnotherSecurePassword123!');
+    assert.equal(secondAdminLogin.status, 200, 'additional Admin can authenticate with database credentials');
+    const secondAdminRecord = await UserModel.findOne({ id: secondAdminId }).lean();
+    assert.equal(await authService.comparePassword('AnotherSecurePassword123!', secondAdminRecord!.passwordHash), true);
+
+    await assert.rejects(
+      UserModel.create({
+        id: 'duplicate-bootstrap-admin',
+        email: 'duplicate-bootstrap@example.test',
+        passwordHash: await authService.hashPassword('AnotherSecurePassword123!'),
+        name: 'Duplicate Bootstrap Admin',
+        role: 'admin',
+        bootstrapAdmin: true,
+        disabled: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      (error: { code?: number }) => error.code === 11000,
+      'bootstrap-only marker remains unique without restricting managed Admin accounts',
+    );
+
     const rolePromotion = await fetch(`${baseUrl}/api/admin/users/migrate-to-admin`, {
       method: 'POST',
       headers: authHeaders,
     });
-    assert.equal(rolePromotion.status, 409);
-    assert.equal(await UserModel.countDocuments({ role: 'admin' }), 1);
+    assert.equal(rolePromotion.status, 410, 'legacy bulk role migration remains disabled');
+    assert.equal(await UserModel.countDocuments({ role: 'admin' }), 2);
     const protectedApi = await fetch(`${baseUrl}/api/admin/protected`, {
       headers: { Cookie: `sid=${sessionId}` },
     });
@@ -167,6 +204,8 @@ test('environment bootstrap creates one admin atomically and never bypasses late
     await SessionModel.deleteMany({ userId: adminId });
     await SessionHistoryModel.deleteMany({ userId: adminId });
     await PasswordResetTokenModel.deleteMany({ userId: adminId });
+    await SessionModel.deleteMany({ userId: secondAdminId });
+    await SessionHistoryModel.deleteMany({ userId: secondAdminId });
   } finally {
     if (adminId) {
       await SessionModel.deleteMany({ userId: adminId });
@@ -174,6 +213,12 @@ test('environment bootstrap creates one admin atomically and never bypasses late
       await PasswordResetTokenModel.deleteMany({ userId: adminId });
       await UserModel.deleteOne({ id: adminId });
       db.users.delete(adminId);
+    }
+    if (secondAdminId) {
+      await SessionModel.deleteMany({ userId: secondAdminId });
+      await SessionHistoryModel.deleteMany({ userId: secondAdminId });
+      await UserModel.deleteOne({ id: secondAdminId });
+      db.users.delete(secondAdminId);
     }
     for (const [key, value] of Object.entries(savedEnvironment)) {
       if (value === undefined) delete process.env[key];

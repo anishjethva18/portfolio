@@ -148,13 +148,13 @@ In production, set `APP_URL` to the public HTTPS origin and set `CORS_ALLOWED_OR
 
 ### 3. Create the first administrator
 
-MongoDB must be running and reachable. Choose **one** of these methods. Both create the single administrator only when MongoDB has no Admin account.
+MongoDB must be running and reachable. Choose **one** of these methods to create the initial Admin account when MongoDB has no Admin. After that, an Admin can add additional administrator accounts from the Admin Control Center's **Users** section.
 
 #### Option A: Bootstrap on the first Admin login
 
 Set `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` in the backend environment (`server/.env` locally, or the backend host's secret settings in production). Start the app and submit those credentials in the existing Admin login screen. The server stores an Argon2id password hash, never the plaintext password.
 
-This option is available only when there is no Admin in MongoDB. After the account is created, database credentials take precedence: changing either environment value does not change or bypass the existing account. You may remove `ADMIN_PASSWORD` after successful setup; to use first-login bootstrap again after an intentional Admin deletion, valid `ADMIN_EMAIL` and `ADMIN_PASSWORD` must be configured again. The active Admin cannot delete itself through the Admin Panel; use password recovery for account access issues. Production still requires `ADMIN_EMAIL` for startup.
+This option is available only when there is no Admin in MongoDB. After the first account is created, database credentials take precedence: changing either environment value does not change or bypass any existing account. You may remove `ADMIN_PASSWORD` after successful setup. The environment credentials never create a second Admin; additional Admins are created through the authenticated Users section. Production still requires `ADMIN_EMAIL` for startup.
 
 #### Option B: Run the one-time bootstrap script
 
@@ -176,7 +176,7 @@ try {
 }
 ```
 
-The script requires MongoDB and, in production, HTTPS `APP_URL`, matching `ADMIN_EMAIL`, and a one-time `ADMIN_SETUP_TOKEN`. Remove the setup token and one-off password from the trusted process environment after provisioning. Neither method creates a second Admin; existing Admins are not overwritten or demoted.
+The script requires MongoDB and, in production, HTTPS `APP_URL`, matching `ADMIN_EMAIL`, and a one-time `ADMIN_SETUP_TOKEN`. Remove the setup token and one-off password from the trusted process environment after provisioning. The script refuses to run when any Admin already exists; it does not overwrite or demote existing accounts.
 
 ### 4. Start the app
 
@@ -261,7 +261,7 @@ All application APIs use the `/api` prefix. For endpoint details and access requ
 ## ☁️ Production checklist
 
 - [ ] Set `NODE_ENV=production`, MongoDB credentials, and `ADMIN_EMAIL`. Set a strong `ADMIN_PASSWORD` only if you intend to use first-login bootstrap; for the CLI script, use a one-time `ADMIN_SETUP_TOKEN` and one-off password instead.
-- [ ] Confirm the MongoDB `users` collection has the `unique_single_admin_by_role` partial unique index after startup. Startup fails safely if more than one Admin already exists; reconcile duplicates manually without deleting or demoting accounts automatically.
+- [ ] Confirm the MongoDB `users` collection has the `unique_bootstrap_admin` partial unique index after startup. This only prevents duplicate environment/script bootstrap records; multiple Admins created through the protected Users management flow are supported.
 - [ ] Serve the site over HTTPS and set the production `APP_URL`.
 - [ ] Configure production email credentials if password recovery or message replies are enabled.
 - [ ] Configure Gemini credentials only for enabled Gemini-backed features.

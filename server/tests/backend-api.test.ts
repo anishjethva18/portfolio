@@ -1789,11 +1789,14 @@ async function runTests() {
         method: 'POST',
         headers: adminMutationHeaders,
         body: JSON.stringify({
-          name: 'Blocked Additional Admin',
+          name: 'Managed Additional Admin',
           email: `managed_admin_${Date.now()}@test.local`,
-          password: 'Admin123',
+          password: 'ManagedAdminPassword123!',
         }),
       });
+      const createdManagedPayload: any = await createdManagedUser.json();
+      const createdManagedId = createdManagedPayload.user?.id;
+      const createdManagedRecord = createdManagedId ? await UserModel.findOne({ id: createdManagedId }).lean() : null;
       const promoteManagedUser = await fetch(`${userManagementUrl}/${managedUserId}/role`, {
         method: 'PUT',
         headers: adminMutationHeaders,
@@ -1804,11 +1807,15 @@ async function runTests() {
         method: 'DELETE',
         headers: { Cookie: `sid=${adminSession.sessionId}`, 'X-CSRF-Token': adminSession.csrfToken },
       });
-      assert(createdManagedUser.status === 409, 'Admin account creation cannot add another administrator');
-      assert(shortManagedUser.status === 409, 'Admin account creation remains disabled for short passwords');
-      assert(createUserRole.status === 409, 'User management cannot create additional accounts');
-      assert(promoteManagedUser.status === 409 && promotedManagedUser?.role === 'user', 'User management cannot promote another administrator');
+      assert(createdManagedUser.status === 201 && createdManagedRecord?.role === 'admin' && createdManagedPayload.user?.passwordHash === undefined, 'Admin can create an additional account without exposing its password hash');
+      assert(shortManagedUser.status === 422, 'Admin account creation rejects passwords shorter than 8 characters');
+      assert(createUserRole.status === 422, 'User management cannot create non-administrator accounts');
+      assert(promoteManagedUser.ok && promotedManagedUser?.role === 'admin', 'User management can promote an existing account to administrator');
       assert(deleteManagedUser.status === 200 && !(await UserModel.exists({ id: managedUserId })), 'Admin can delete a managed user account and revoke its sessions');
+      if (createdManagedId) {
+        await UserModel.deleteOne({ id: createdManagedId });
+        db.users.delete(createdManagedId);
+      }
 
       const projectEndpoint = `http://127.0.0.1:${adminApiPort}/api/admin/projects`;
       const originalProjectDraft = await AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean();
@@ -2019,11 +2026,11 @@ async function runTests() {
       );
       assert(!JSON.stringify(contentStudioPayload).includes('adminPinHash') && !('securitySettings' in contentStudioPayload.draft), 'Content studio response excludes private security fields');
       assert(missingCsrf.status === 403, 'Admin state changes require a valid CSRF token');
-      assert(secondAdminPromotion.status === 409 && promotedUser?.role === 'user', 'Administrator cannot promote another account to admin');
+      assert(secondAdminPromotion.ok && promotedUser?.role === 'admin', 'Administrator can promote another account to admin');
       assert(activeAdminRoleChange.status === 403, 'Active administrator cannot demote their own account');
       assert(restorePromotedUser.status === 400, 'Administrator accounts cannot be demoted to a user role');
       assert(
-        roleMigrationResponse.status === 409 &&
+        roleMigrationResponse.status === 410 &&
           roleMigrationPayload.success === false &&
           migratedLegacyUser?.role === 'user' &&
           (await sessionService.validateSession(legacySession.sessionId)) !== null,

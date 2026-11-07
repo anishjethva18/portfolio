@@ -104,8 +104,6 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
   const [archivePage, setArchivePage] = useState(1);
   const [archiveTotal, setArchiveTotal] = useState(0);
   const archiveListRef = useRef<HTMLDivElement>(null);
-  const adminRolesMigratedRef = useRef(false);
-  const adminRolesMigrationPromiseRef = useRef<Promise<void> | null>(null);
   const archivePageSize = useResponsivePageSize(10, 220, archiveListRef, 80);
   const [contactsList, setContactsList] = useState<any[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -469,30 +467,6 @@ export const AdminPanelApp: React.FC<{ windowId?: string }> = ({ windowId }) => 
 
   const fetchUsers = async (silent = false) => {
     try {
-      if (!adminRolesMigratedRef.current) {
-        if (!adminRolesMigrationPromiseRef.current) {
-          adminRolesMigrationPromiseRef.current = (async () => {
-            const migrationResponse = await apiFetch('/api/admin/users/migrate-to-admin', {
-              method: 'POST',
-              body: JSON.stringify({}),
-            });
-            const migrationData = await migrationResponse.json();
-            if (!migrationResponse.ok || !migrationData.success) {
-              throw new Error(migrationData.error || 'Existing accounts could not be converted to administrators.');
-            }
-            adminRolesMigratedRef.current = true;
-            if (migrationData.migratedCount > 0) {
-              setSuccessMsg(`${migrationData.migratedCount} existing account(s) converted to Admin.`);
-            }
-          })();
-        }
-        try {
-          await adminRolesMigrationPromiseRef.current;
-        } catch (migrationError) {
-          adminRolesMigrationPromiseRef.current = null;
-          throw migrationError;
-        }
-      }
       const res = await apiFetch('/api/admin/users');
       const data = await res.json();
       if (!res.ok || !data.success || !Array.isArray(data.users)) throw new Error(data.error || 'Administrator accounts could not be loaded.');

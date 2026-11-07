@@ -13,6 +13,7 @@ export interface User {
   id: string;
   email: string;
   passwordHash: string;
+  bootstrapAdmin?: boolean;
   name: string;
   role: 'admin' | 'user' | 'guest';
   disabled?: boolean;

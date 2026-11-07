@@ -25,72 +25,51 @@ export class AdminBootstrapConfigurationError extends Error {
   }
 }
 
-export class AdminAccountIntegrityError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AdminAccountIntegrityError';
-  }
-}
-
 export class AuthService {
   // In-memory brute-force protection map (email -> attempt record)
   private loginAttempts = new Map<string, LoginAttemptRecord>();
-  private adminConstraintClient: mongoose.mongo.MongoClient | null = null;
-  private adminConstraintPromise: Promise<void> | null = null;
+  private bootstrapIndexClient: mongoose.mongo.MongoClient | null = null;
+  private bootstrapIndexPromise: Promise<void> | null = null;
 
-  public async ensureSingleAdminConstraint(): Promise<void> {
+  public async ensureBootstrapAdminConstraint(): Promise<void> {
     if (mongoose.connection.readyState !== 1) {
       throw new Error('Authentication storage is unavailable. Please try again later.');
     }
 
     const client = mongoose.connection.getClient();
-    if (this.adminConstraintClient === client && this.adminConstraintPromise) {
-      return this.adminConstraintPromise;
+    if (this.bootstrapIndexClient === client && this.bootstrapIndexPromise) {
+      return this.bootstrapIndexPromise;
     }
 
-    this.adminConstraintClient = client;
-    this.adminConstraintPromise = (async () => {
-      const admins = await UserModel.find({ role: 'admin' })
-        .select('id')
-        .lean();
-      if (admins.length > 1) {
-        throw new AdminAccountIntegrityError(
-          'Multiple administrator accounts exist; manually resolve them before starting the server.',
-        );
-      }
-
+    this.bootstrapIndexClient = client;
+    this.bootstrapIndexPromise = (async () => {
       const indexes = await UserModel.collection.indexes();
-      const legacyRoleIndex = indexes.find((index) =>
-        Object.keys(index.key).length === 1 &&
-        index.key.role === 1 &&
-        !index.unique &&
-        !index.partialFilterExpression,
-      );
-      if (legacyRoleIndex?.name) {
+      const legacyAdminIndex = indexes.find((index) => index.name === 'unique_single_admin_by_role');
+      if (legacyAdminIndex?.name) {
         try {
-          await UserModel.collection.dropIndex(legacyRoleIndex.name);
+          await UserModel.collection.dropIndex(legacyAdminIndex.name);
         } catch (error) {
           if ((error as { code?: number }).code !== 27) throw error;
         }
       }
 
       await UserModel.collection.createIndex(
-        { role: 1 },
+        { bootstrapAdmin: 1 },
         {
           unique: true,
-          partialFilterExpression: { role: 'admin' },
-          name: 'unique_single_admin_by_role',
+          partialFilterExpression: { bootstrapAdmin: true },
+          name: 'unique_bootstrap_admin',
         },
       );
     })().catch((error: unknown) => {
-      if (this.adminConstraintClient === client) {
-        this.adminConstraintClient = null;
-        this.adminConstraintPromise = null;
+      if (this.bootstrapIndexClient === client) {
+        this.bootstrapIndexClient = null;
+        this.bootstrapIndexPromise = null;
       }
       throw error;
     });
 
-    return this.adminConstraintPromise;
+    return this.bootstrapIndexPromise;
   }
 
   /**
@@ -188,7 +167,7 @@ export class AuthService {
     if (mongoose.connection.readyState !== 1) {
       throw new Error('Authentication storage is unavailable. Please try again later.');
     }
-    await this.ensureSingleAdminConstraint();
+    await this.ensureBootstrapAdminConstraint();
     let user = await UserModel.findOne({ email: normalizedEmail, role: 'admin' }).lean() as User | null;
     let authenticatedByBootstrap = false;
 
@@ -226,6 +205,7 @@ export class AuthService {
         id: adminId,
         email: configuredEmail,
         passwordHash: await this.hashPassword(configuredPassword),
+        bootstrapAdmin: true,
         name: process.env.ADMIN_NAME?.trim() || 'Anish Jethva',
         role: 'admin' as const,
         disabled: false,
@@ -243,8 +223,9 @@ export class AuthService {
 
       try {
         await UserModel.create(bootstrapAdmin);
-        db.users.set(adminId, bootstrapAdmin);
-        user = bootstrapAdmin;
+        const { bootstrapAdmin: _bootstrapAdmin, ...cachedAdmin } = bootstrapAdmin;
+        db.users.set(adminId, cachedAdmin);
+        user = cachedAdmin;
         authenticatedByBootstrap = true;
       } catch (error) {
         if ((error as { code?: number })?.code !== 11000) throw error;
@@ -480,7 +461,7 @@ export class AuthService {
     if (mongoose.connection.readyState !== 1) {
       throw new Error('MongoDB is required to initialize the administrator.');
     }
-    await this.ensureSingleAdminConstraint();
+    await this.ensureBootstrapAdminConstraint();
     const minPasswordLength = minimumAdminPasswordLength();
     if (!email || !pass || pass.length < minPasswordLength || pass.length > 1024) {
       throw new Error(`A valid email and password of at least ${minPasswordLength} characters are required.`);
@@ -507,6 +488,7 @@ export class AuthService {
       id: 'usr_admin_anish',
       email: normalizedEmail,
       passwordHash,
+      bootstrapAdmin: true,
       name,
       role: 'admin',
       avatar: '/avatar.png',
@@ -522,9 +504,10 @@ export class AuthService {
     };
 
     await UserModel.create(adminUser);
-    db.users.set(adminUser.id, adminUser);
+    const { bootstrapAdmin: _bootstrapAdmin, ...cachedAdmin } = adminUser;
+    db.users.set(adminUser.id, cachedAdmin);
 
-    const { passwordHash: _, ...safeAdmin } = adminUser;
+    const { passwordHash: _, ...safeAdmin } = cachedAdmin;
     return safeAdmin;
   }
 

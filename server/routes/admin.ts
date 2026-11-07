@@ -871,11 +871,57 @@ adminRouter.get('/users', requireAdmin, async (req: AuthenticatedRequest, res: R
 });
 
 adminRouter.post('/users/migrate-to-admin', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
+  res.status(410).json({ success: false, error: 'Automatic account-role migration is no longer available. Manage account roles individually.' });
 });
 
 adminRouter.post('/users', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (req.body?.role !== undefined && req.body.role !== 'admin') {
+      res.status(422).json({ success: false, error: 'Only administrator accounts can be created.' });
+      return;
+    }
+    if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      res.status(422).json({ success: false, error: 'Provide a valid name and email address.' });
+      return;
+    }
+    if (password.length < 8 || password.length > 1024) {
+      res.status(422).json({ success: false, error: 'Password must contain between 8 and 1,024 characters.' });
+      return;
+    }
+    if (await UserModel.exists({ email })) {
+      res.status(409).json({ success: false, error: 'An account with this email already exists.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const user = {
+      id: `usr_${crypto.randomUUID()}`,
+      email,
+      name,
+      role: 'admin' as const,
+      passwordHash: await authService.hashPassword(password),
+      createdAt: now,
+      updatedAt: now,
+      disabled: false,
+    };
+    await UserModel.create(user);
+    db.users.set(user.id, user);
+    await recordAudit(req, 'CREATE', 'User', user.id, `Created administrator account: ${email}`);
+    res.status(201).json({
+      success: true,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    });
+  } catch (error) {
+    if ((error as { code?: number })?.code === 11000) {
+      res.status(409).json({ success: false, error: 'An account with this email already exists.' });
+      return;
+    }
+    console.error('[Admin] Administrator account could not be created.', error);
+    res.status(503).json({ success: false, error: 'Administrator account could not be created.' });
+  }
 });
 
 adminRouter.put('/users/:id/role', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -893,10 +939,6 @@ adminRouter.put('/users/:id/role', requireAdmin, async (req: AuthenticatedReques
     const user = await UserModel.findOne({ id }).lean();
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found.' });
-      return;
-    }
-    if (user.role !== 'admin') {
-      res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
       return;
     }
     const roleChanged = user.role !== role;

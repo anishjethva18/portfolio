@@ -62,6 +62,7 @@ export const UserManagement: React.FC<{
 
     return (
         <div className="space-y-4">
+            <p className="text-xs text-slate-500">Add as many administrator accounts as your team needs. Each account signs in with its own email and password.</p>
             <form onSubmit={(event) => void createUser(event)} className="admin-content-card grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
                 <input required maxLength={120} placeholder="Full name" aria-label="New account name" value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} className="h-11 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
                 <input required type="email" maxLength={254} placeholder="Email" aria-label="New account email" value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} className="h-11 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
@@ -91,7 +92,7 @@ export const UserManagement: React.FC<{
                             <tr key={user.id}>
                                 <td data-label="Email" className="p-3 break-all">{user.email}</td>
                                 <td data-label="Role" className="p-3">
-                                    <span className="current-user-role inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold">Admin</span>
+                                    <span className="current-user-role inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold">{user.role === 'admin' ? 'Admin' : user.role === 'guest' ? 'Guest' : 'User'}</span>
                                 </td>
                                 <td data-label="Status" className="p-3">
                                     {user.disabled ? (
