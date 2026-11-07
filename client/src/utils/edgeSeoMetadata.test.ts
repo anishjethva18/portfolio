@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderPublicRouteMetadata } from './seo-metadata';
+import { renderPublicRouteMetadata } from '../../edge-functions/seo-metadata.ts';
 
 const originalFetch = globalThis.fetch;
 const shell = '<!doctype html><html><head><title>Shell</title></head><body><div id="root"></div></body></html>';
