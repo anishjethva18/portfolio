@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { isPortfolioDataMutation, notifyPortfolioDataUpdated } from '../utils/portfolioSync';
 import { broadcastAdminSessionEnded, isProtectedAdminRequest, watchAdminSessionEnded } from '../utils/adminSessionEvents';
+import { getInitialLockState, OS_LOCK_STORAGE_KEY } from '../utils/osRoutePolicy';
 
 export interface UserProfile {
   id: string;
@@ -57,7 +58,7 @@ async function readLoginResponse(response: Response): Promise<any> {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const LOCK_KEY = 'win11_portfolio_is_locked';
+const LOCK_KEY = OS_LOCK_STORAGE_KEY;
 export const DEFAULT_AVATAR_KEY = 'win11_default_avatar';
 export const ABOUT_PROFILE_KEY = 'win11_custom_about_profile';
 
@@ -88,7 +89,17 @@ const getInitialName = (): string => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
-  const [isLocked, setIsLocked] = useState<boolean>(true);
+  const [isLocked, setIsLocked] = useState<boolean>(() => {
+    const path = window.location.pathname.replace(/\/+$/, '') || '/';
+    const initialLockState = getInitialLockState(path, sessionStorage);
+    if (path === '/' || path === '/home') {
+      try {
+        sessionStorage.setItem(LOCK_KEY, String(initialLockState));
+        localStorage.setItem(LOCK_KEY, String(initialLockState));
+      } catch {}
+    }
+    return initialLockState;
+  });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const currentUser = useRef(user);
 
@@ -169,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLocked(lockScreen);
     try {
       sessionStorage.setItem('win11_admin_panel_locked', 'true');
+      sessionStorage.setItem(LOCK_KEY, String(lockScreen));
       localStorage.setItem(LOCK_KEY, String(lockScreen));
     } catch (error) {
       console.error('[AuthContext] Could not persist the admin lock state after session end.', error);
@@ -249,6 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLocked(false);
       try {
         localStorage.setItem(LOCK_KEY, 'false');
+        sessionStorage.setItem(LOCK_KEY, 'false');
       } catch {}
       setIsLoading(false);
       return { success: true };
@@ -271,6 +284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLocked(lockScreen);
     try {
       localStorage.setItem(LOCK_KEY, String(lockScreen));
+      sessionStorage.setItem(LOCK_KEY, String(lockScreen));
       sessionStorage.setItem('win11_admin_panel_locked', 'true');
     } catch {}
     broadcastAdminSessionEnded(lockScreen);
@@ -280,6 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLocked(true);
     try {
       localStorage.setItem(LOCK_KEY, 'true');
+      sessionStorage.setItem(LOCK_KEY, 'true');
     } catch {}
   };
 
@@ -288,6 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLocked(false);
       try {
         localStorage.setItem(LOCK_KEY, 'false');
+        sessionStorage.setItem(LOCK_KEY, 'false');
       } catch {}
       return { success: true };
     }
@@ -308,6 +324,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLocked(false);
         try {
           localStorage.setItem(LOCK_KEY, 'false');
+          sessionStorage.setItem(LOCK_KEY, 'false');
         } catch {}
         if (data.user) setUser(data.user);
         if (data.csrfToken) setCsrfToken(data.csrfToken);

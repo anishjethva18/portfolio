@@ -25,6 +25,9 @@
 This is an interactive portfolio presented as a Windows 11-inspired desktop. Visitors can explore portfolio apps, open and arrange windows, and use the built-in tools. A separate administrator workspace manages portfolio content and publishes updates without replacing the desktop experience.
 The public [Privacy Policy](client/src/pages/PrivacyPolicy.tsx) is available at
 [`/privacy-policy`](https://anishjethva.netlify.app/privacy-policy).
+The standalone [Portfolio Information page](client/src/pages/AppInfo.tsx) is
+available at [`/app-info`](https://anishjethva.netlify.app/app-info); the root
+URL continues to open the existing Lock Screen.
 
 | 🖥️ Interactive desktop                                                                           | 📁 Native-feeling apps                                                                                   | 🛠️ Private admin workspace                                                                                |
 | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -40,6 +43,8 @@ The public [Privacy Policy](client/src/pages/PrivacyPolicy.tsx) is available at
 - Opening an app dismisses the Widgets board. The Settings About page links to About, Projects, and Contact in that order.
 - MongoDB-backed portfolio content, project drafts, revisions, user accounts, and analytics.
 - Public Privacy Policy page at `/privacy-policy`, outside the desktop and admin-authentication flow.
+- Public Portfolio Information page at `/app-info`, populated from published profile and project data.
+- Registry-driven clean application URLs; published app availability gates visitor routes and session recovery.
 - Server-side administrator authentication with HttpOnly session cookies, CSRF checks, and Argon2id password hashes.
 - Optional Gemini-powered features and Gmail OAuth, SMTP, or Resend email delivery.
 - API health checks, audit history, manual backup and restore, and protected media handling.
@@ -79,7 +84,7 @@ Portfolio edits are saved privately as drafts. Publishing makes the draft public
 ```text
 client/
   src/components/          Desktop, portfolio apps, and admin interface
-  src/pages/               Public standalone pages, including Privacy Policy
+  src/pages/               Public standalone Portfolio Information and Privacy Policy pages
   src/context/             Authentication and operating-system state
   src/data/                Initial portfolio and desktop data
   src/hooks/               Shared client data hooks, including virtual D: content
@@ -253,7 +258,7 @@ All application APIs use the `/api` prefix. For endpoint details and access requ
 - [ ] Use persistent, writable storage for uploaded media and server backups; back up MongoDB and files together.
 - [ ] Verify admin sign-in, cookies, publishing, analytics, uploads, contact handling, and optional integrations in the deployed environment.
 
-`netlify.toml` configures the Netlify frontend build, API proxy, SEO edge function (source in `client/edge-functions/`), and SPA fallback. In Netlify, keep the base directory at the repository root and set the Package directory to `client`. The Express API must also be deployed to a Node.js host and configured for the production frontend origin and database.
+`netlify.toml` configures the Netlify frontend build, API proxy, route-specific SEO edge function (source in `client/edge-functions/`), and SPA fallback. The public `/app-info` and `/privacy-policy` routes receive their metadata and initial public content before client JavaScript runs. In Netlify, keep the base directory at the repository root and set the Package directory to `client`. The Express API must also be deployed to a Node.js host and configured for the production frontend origin and database. After deployment, verify direct navigation and refresh on both public pages and enabled application routes; the root URL must still show the Lock Screen.
 
 ## 📦 Data and uploads
 

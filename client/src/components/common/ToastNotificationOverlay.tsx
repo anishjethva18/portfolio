@@ -30,6 +30,7 @@ export const ToastNotificationOverlay: React.FC<{ suppressWelcome?: boolean }> =
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
         // Auto-dismiss in 5 seconds (5000ms) as per requirement 2.1 E
         dismissTimerRef.current = setTimeout(() => {
+          if (latest.id === 'welcome-1') markNotificationRead(latest.id);
           setActiveToast(null);
         }, 5000);
       }
@@ -42,6 +43,10 @@ export const ToastNotificationOverlay: React.FC<{ suppressWelcome?: boolean }> =
     setActiveToast(null);
     markNotificationRead('welcome-1');
   }, [suppressWelcome, activeToast?.id, markNotificationRead]);
+
+  useEffect(() => () => {
+    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+  }, []);
 
   const handleDismiss = () => {
     if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
@@ -76,6 +81,7 @@ export const ToastNotificationOverlay: React.FC<{ suppressWelcome?: boolean }> =
       // Reset position and restart 5s timer
       setSwipeOffset(0);
       dismissTimerRef.current = setTimeout(() => {
+        if (activeToast?.id === 'welcome-1') markNotificationRead(activeToast.id);
         setActiveToast(null);
       }, 5000);
     }

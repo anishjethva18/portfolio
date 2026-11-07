@@ -38,7 +38,7 @@ import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
 import { setPortfolioMediaResourcePolicy } from './utils/portfolioMediaHeaders';
 import { portfolioMediaRouter } from './routes/portfolioMedia';
-import { renderSeoMetadataHtml, stripSeoMetadataHtml } from '../client/src/utils/seoMetadata';
+import { createRouteSeoContent, renderSeoMetadataHtml, stripSeoMetadataHtml } from '../client/src/utils/seoMetadata';
 import { handlePublishedSeoMetadata, loadPublishedSeoMetadata } from './services/seoMetadataService';
 import {
   buildContentSecurityPolicyDirectives,
@@ -553,33 +553,12 @@ async function startServer() {
         const siteSettings = publishedContent.siteSettings && typeof publishedContent.siteSettings === 'object'
           ? publishedContent.siteSettings as Record<string, unknown>
           : {};
-        const profile = publishedContent.profile && typeof publishedContent.profile === 'object'
-          ? publishedContent.profile as Record<string, unknown>
-          : {};
-        const website = typeof profile.website === 'string' ? profile.website : '';
         const requestOrigin = `${req.protocol}://${req.get('host')}`;
-        const publicOrigin = (() => {
-          try {
-            const url = new URL(website || requestOrigin);
-            return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : requestOrigin;
-          } catch {
-            return requestOrigin;
-          }
-        })();
-        const resolvePublicImage = (value: unknown) => {
-          if (typeof value !== 'string' || !value.trim()) return '';
-          try {
-            const url = new URL(value, publicOrigin);
-            return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
-          } catch {
-            return '';
-          }
-        };
-        const canonicalUrl = resolvePublicImage(siteSettings.canonicalUrl) || (/^https?:\/\//i.test(website) ? website : '');
-        html = renderSeoMetadataHtml(html, {
+        const routeContent = createRouteSeoContent({
           ...publishedContent,
-          siteSettings: { ...siteSettings, canonicalUrl: canonicalUrl || website },
-        }, publicOrigin);
+          siteSettings,
+        }, req.path, requestOrigin);
+        html = renderSeoMetadataHtml(html, routeContent, requestOrigin);
         res.setHeader('Cache-Control', 'no-cache');
         res.type('html').send(html);
       } catch (error) {

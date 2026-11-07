@@ -9,7 +9,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:capture-storage": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test client/src/services/capture-storage-service.test.ts"
+    "test:capture-storage": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test client/src/services/capture-storage-service.test.ts",
+    "test:session-recovery": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test client/src/utils/os-session-recovery.test.ts",
+    "test:routing": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test client/src/utils/application-routes.test.ts client/src/utils/os-route-policy.test.ts client/src/utils/os-session-recovery.test.ts client/edge-functions/seo-metadata.test.ts",
+    "test:notifications": "cd .. && node --import=./server/node_modules/tsx/dist/loader.mjs --test client/src/utils/notification-policy.test.ts"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

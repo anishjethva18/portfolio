@@ -19,11 +19,12 @@ import {
 
 interface LockScreenProps {
   wallpaper: string;
+  onUnlock?: () => void;
 }
 
 const FALLBACK_WALLPAPER = '/wallpapers/Landscape_Mountain_Lake.jpg';
 
-export const LockScreen: React.FC<LockScreenProps> = ({ wallpaper }) => {
+export const LockScreen: React.FC<LockScreenProps> = ({ wallpaper, onUnlock }) => {
   const { isLocked, unlockScreen } = useAuth();
   const { setPowerState, files, settings } = useOS();
   const { siteSettings } = usePublishedProfile();
@@ -74,7 +75,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ wallpaper }) => {
         if (e.key === 'Escape') setShowPowerMenu(false);
         return;
       }
-      void unlockScreen('');
+      void handleUnlock();
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -84,7 +85,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({ wallpaper }) => {
   if (!isLocked) return null;
 
   const handleUnlock = () => {
-    void unlockScreen('');
+    void unlockScreen('').then((result) => {
+      if (result.success) onUnlock?.();
+    });
   };
 
   return (

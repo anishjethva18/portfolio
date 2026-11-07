@@ -106,6 +106,7 @@ const renderAppContent = (appId: AppId, args?: Record<string, any>, windowId?: s
       return (
         <MediaApp
           filePath={args?.filePath}
+          cameraDirectView={args?.cameraDirectView}
           initialMediaId={args?.initialMediaId || args?.mediaId}
           initialMediaUrl={args?.initialMediaUrl}
           initialMediaName={args?.initialMediaName}

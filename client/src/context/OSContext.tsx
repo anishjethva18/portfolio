@@ -31,12 +31,26 @@ import {
   normalizeVfsDestinationPath,
 } from '../utils/virtualDDrive';
 import { apiFetch } from '../utils/apiClient';
+import {
+  readOsSessionSnapshot,
+  writeOsSessionSnapshot,
+} from '../utils/osSessionRecovery';
+import {
+  getApplicationRoute,
+  getApplicationRouteById,
+  normalizeApplicationPath,
+} from '../utils/applicationRoutes';
+import {
+  getInitialNotifications,
+  markWelcomeNotificationShown,
+} from '../utils/notificationPolicy';
 
 interface OSContextType {
   // Windows
   windows: WindowState[];
   activeWindowId: string | null;
   openApp: (appId: AppId, args?: Record<string, any>, forceNewWindow?: boolean) => void;
+  navigateToDesktop: () => void;
   closeWindow: (id: string) => void;
   registerWindowCloseGuard: (id: string, guard: () => Promise<boolean>) => () => void;
   closeAllWindows: () => void;
@@ -145,6 +159,7 @@ interface OSContextType {
   updateSettings: (newSettings: Partial<SystemSettings>) => void;
   apps: AppMetadata[];
   hiddenAppIds: AppId[];
+  publishedAppAvailabilityReady: boolean;
   updateHiddenAppIds: (appIds: AppId[]) => void;
   adminAppEnabledInStart: boolean;
   setAdminAppEnabledInStart: (enabled: boolean) => void;
@@ -153,6 +168,7 @@ interface OSContextType {
     taskbarPinnedApps?: string[];
     startPinnedApps?: string[];
     adminAppEnabledInStart?: boolean;
+    disabledApps?: AppId[];
   }) => void;
 
   // Start & Search & Tray & Notifications
@@ -341,10 +357,29 @@ const removeMarkedDocumentsDemoFilesFromServer = async (): Promise<void> => {
 };
 
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [windows, setWindows] = useState<WindowState[]>([]);
+  const [restoredSession] = useState(() => {
+    try {
+      const savedDesktops = localStorage.getItem('win11_virtual_desktops');
+      const parsedDesktops = savedDesktops ? JSON.parse(savedDesktops) : null;
+      const knownDesktopIds = Array.isArray(parsedDesktops)
+        ? parsedDesktops
+            .map((desktop: unknown) =>
+              desktop && typeof desktop === 'object' && 'id' in desktop && typeof desktop.id === 'string'
+                ? desktop.id
+                : null
+            )
+            .filter((id: string | null): id is string => id !== null)
+        : ['desktop-1', 'desktop-2'];
+      return readOsSessionSnapshot(sessionStorage, knownDesktopIds, loadHiddenAppIds());
+    } catch (error) {
+      console.error('[OSContext] Could not restore the previous browser-tab session.', error);
+      return { windows: [], activeWindowId: null, currentDesktopId: 'desktop-1' };
+    }
+  });
+  const [windows, setWindows] = useState<WindowState[]>(restoredSession.windows);
   const windowCloseGuards = React.useRef(new Map<string, () => Promise<boolean>>());
   const pendingWindowCloses = React.useRef(new Set<string>());
-  const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
+  const [activeWindowId, setActiveWindowId] = useState<string | null>(restoredSession.activeWindowId);
   const [settings, setSettings] = useState<SystemSettings>(() => {
     try {
       const saved = localStorage.getItem('win11_system_settings');
@@ -383,6 +418,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [deletedFiles, setDeletedFiles] = useState<FileItem[]>([]);
   const [desktopIcons, setDesktopIcons] = useState<DesktopIconItem[]>(INITIAL_DESKTOP_ICONS);
   const [hiddenAppIds, setHiddenAppIds] = useState<AppId[]>(loadHiddenAppIds);
+  const [publishedAppAvailabilityReady, setPublishedAppAvailabilityReady] = useState(false);
   const [adminAppEnabledInStart, setAdminAppEnabledInStartState] = useState(() => {
     try {
       return localStorage.getItem('win11_admin_start_enabled') === 'true';
@@ -398,11 +434,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       console.error('[Appearance] Could not save Admin Control Center Start menu visibility.');
     }
   }, []);
+  const updateHiddenAppIds = useCallback((appIds: AppId[]) => {
+    const safeIds = appIds.filter((id) => id !== 'admin' && APPS_LIST.some((app) => app.id === id));
+    const hidden = Array.from(new Set(safeIds));
+    setHiddenAppIds(hidden);
+    setWindows((previous) => {
+      const remaining = previous.filter((win) => !hidden.includes(win.appId));
+      const visible = remaining.filter((win) => !win.isMinimized);
+      let topWindow = visible[0];
+      for (const window of visible) {
+        if (!topWindow || window.zIndex > topWindow.zIndex) topWindow = window;
+      }
+      setActiveWindowId(topWindow?.id || null);
+      return remaining.map((window) => ({
+        ...window,
+        isFocused: window.id === topWindow?.id,
+      }));
+    });
+    try { localStorage.setItem('win11_hidden_apps', JSON.stringify(hidden)); } catch {}
+  }, []);
   const applyPublishedAppLayout = useCallback((layout: {
     desktopShortcuts?: DesktopIconItem[];
     taskbarPinnedApps?: string[];
     startPinnedApps?: string[];
     adminAppEnabledInStart?: boolean;
+    disabledApps?: AppId[];
   }) => {
     const validAppIds = new Set(APPS_LIST.map((app) => app.id));
     if (Array.isArray(layout.desktopShortcuts)) {
@@ -428,14 +484,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         console.error('[Appearance] Could not apply the published Admin Control Center Start menu visibility.');
       }
     }
-  }, []);
-  const updateHiddenAppIds = useCallback((appIds: AppId[]) => {
-    const safeIds = appIds.filter((id) => id !== 'admin' && APPS_LIST.some((app) => app.id === id));
-    const hidden = Array.from(new Set(safeIds));
-    setHiddenAppIds(hidden);
-    try { localStorage.setItem('win11_hidden_apps', JSON.stringify(hidden)); } catch {}
-    setWindows((previous) => previous.filter((win) => !hidden.includes(win.appId)));
-  }, []);
+    if (Array.isArray(layout.disabledApps)) updateHiddenAppIds(layout.disabledApps);
+    setPublishedAppAvailabilityReady(true);
+  }, [updateHiddenAppIds]);
 
   // Helper to find the first completely unoccupied grid slot sequentially to prevent overlap
   const findNextAvailablePosition = useCallback((existingIcons: DesktopIconItem[]) => {
@@ -664,7 +715,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       { id: 'desktop-2', name: 'Desktop 2' },
     ];
   });
-  const [currentDesktopId, setCurrentDesktopId] = useState<string>('desktop-1');
+  const [currentDesktopId, setCurrentDesktopId] = useState<string>(restoredSession.currentDesktopId);
   const [isTaskViewOpen, setIsTaskViewOpen] = useState(false);
 
   useEffect(() => {
@@ -672,6 +723,40 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       localStorage.setItem('win11_virtual_desktops', JSON.stringify(desktops));
     } catch {}
   }, [desktops]);
+
+  const sessionSnapshotRef = React.useRef({
+    windows,
+    activeWindowId,
+    currentDesktopId,
+  });
+  useEffect(() => {
+    sessionSnapshotRef.current = { windows, activeWindowId, currentDesktopId };
+  }, [windows, activeWindowId, currentDesktopId]);
+
+  const persistSessionSnapshot = useCallback(() => {
+    try {
+      writeOsSessionSnapshot(sessionStorage, sessionSnapshotRef.current);
+    } catch (error) {
+      console.error('[OSContext] Could not save the browser-tab session for recovery.', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const saveWhenHidden = () => {
+      if (document.visibilityState === 'hidden') persistSessionSnapshot();
+    };
+    window.addEventListener('pagehide', persistSessionSnapshot);
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', persistSessionSnapshot);
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+    };
+  }, [persistSessionSnapshot]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(persistSessionSnapshot, 200);
+    return () => window.clearTimeout(timeout);
+  }, [windows, activeWindowId, currentDesktopId, persistSessionSnapshot]);
 
   const createDesktop = useCallback(() => {
     setDesktops((prev) => {
@@ -817,16 +902,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setIsWidgetsOpen(false);
   }, []);
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 'welcome-1',
-      title: 'Welcome to Windows 11 Portfolio',
-      message: `Explore ${PORTFOLIO_USER.name}'s interactive OS! Double-click icons or use the Start menu.`,
-      timestamp: formatTime(new Date(), { hour: '2-digit', minute: '2-digit' }),
-      type: 'info',
-      read: false,
-    },
-  ]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() =>
+    getInitialNotifications(localStorage)
+  );
+  const hasWelcomeNotification = notifications.some((notification) => notification.id === 'welcome-1');
+
+  useEffect(() => {
+    if (hasWelcomeNotification) markWelcomeNotificationShown(localStorage);
+  }, [hasWelcomeNotification]);
 
   const addNotification = useCallback((item: Omit<NotificationItem, 'id' | 'timestamp' | 'read'>) => {
     const id = 'notif-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -1439,14 +1522,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       const appMeta = APPS_LIST.find((a) => a.id === appId);
       if (!appMeta) return;
-      if (appId !== 'admin' && hiddenAppIds.includes(appId)) return;
+      if (appId !== 'admin' && (!publishedAppAvailabilityReady || hiddenAppIds.includes(appId))) return;
 
       if (appId !== 'admin') {
-        trackPortfolioAnalytics('PORTFOLIO_APP_OPEN', 'interaction', `/${appId}`, {
+        const appPath = getApplicationRouteById(appId)?.path || '/home';
+        trackPortfolioAnalytics('PORTFOLIO_APP_OPEN', 'interaction', appPath, {
           appId,
           appName: appMeta.name,
         });
-        trackPortfolioAnalytics('PORTFOLIO_PAGE_VIEW', 'navigation', `/${appId}`, {
+        trackPortfolioAnalytics('PORTFOLIO_PAGE_VIEW', 'navigation', appPath, {
           appId,
           appName: appMeta.name,
         });
@@ -1520,8 +1604,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setActiveWindowId(newId);
       soundManager.playOpenWindow();
     },
-    [windows, currentDesktopId, hiddenAppIds, closeWidgets]
+    [windows, currentDesktopId, hiddenAppIds, publishedAppAvailabilityReady, closeWidgets]
   );
+
+  const navigateToDesktop = useCallback(() => {
+    setActiveWindowId(null);
+    setWindows((previous) => previous.map((window) => ({ ...window, isFocused: false })));
+  }, []);
 
   const removeWindow = useCallback((id: string) => {
     setWindows((prev) => {
@@ -2678,13 +2767,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Mobile / Android Hardware Back Button & Browser History Stack
   useEffect(() => {
+    const isCleanPortfolioRoute = () => {
+      const path = normalizeApplicationPath(window.location.pathname);
+      return path === '/' || path === '/home' || Boolean(getApplicationRoute(path));
+    };
+
     try {
-      window.history.pushState({ osState: 'root' }, '');
+      if (!isCleanPortfolioRoute()) window.history.pushState({ osState: 'root' }, '');
     } catch {
       // safe fallback
     }
 
     const handlePopState = () => {
+      if (isCleanPortfolioRoute()) return;
       try {
         window.history.pushState({ osState: 'active' }, '');
       } catch {
@@ -2799,6 +2894,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         windows,
         activeWindowId,
         openApp,
+        navigateToDesktop,
         closeWindow,
         registerWindowCloseGuard,
         closeAllWindows,
@@ -2885,6 +2981,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         updateSettings,
         apps: APPS_LIST.filter((app) => !hiddenAppIds.includes(app.id) && (app.id !== 'admin' || adminAppEnabledInStart)),
         hiddenAppIds,
+        publishedAppAvailabilityReady,
         updateHiddenAppIds,
         adminAppEnabledInStart,
         setAdminAppEnabledInStart,

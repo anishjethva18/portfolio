@@ -73,8 +73,11 @@ export const MobileStatusBar: React.FC = () => {
   return (
     <div
       id="mobile-status-bar"
-      className="sm:hidden fixed top-0 left-0 right-0 h-8 z-[1002] px-2.5 flex items-center justify-between text-xs font-semibold text-slate-900 dark:text-white select-none pointer-events-auto backdrop-blur-md bg-white/85 dark:bg-black/60 border-b border-slate-300/60 dark:border-white/10 shadow-xs"
-      style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      className="sm:hidden fixed top-0 left-0 right-0 z-[1002] px-2.5 flex items-center justify-between text-xs font-semibold text-slate-900 dark:text-white select-none pointer-events-auto backdrop-blur-md bg-white/85 dark:bg-black/60 border-b border-slate-300/60 dark:border-white/10 shadow-xs"
+      style={{
+        height: 'calc(2rem + env(safe-area-inset-top, 0px))',
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+      }}
       onTouchStart={(e) => {
         if (e.touches.length > 0) {
           setTouchStartX(e.touches[0].clientX);
@@ -234,4 +237,3 @@ export const MobileStatusBar: React.FC = () => {
     </div>
   );
 };
-

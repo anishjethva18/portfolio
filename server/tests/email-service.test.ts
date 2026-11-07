@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, getEmailBrandMark, getEmailBranding, getGoogleOAuthAccessToken, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
+import { contactDb, createAdminReplyEmailHtml, createPasswordResetEmailHtml, createPortfolioEmailHtml, createSenderConfirmationEmailHtml, EmailService, getEmailBrandMark, getEmailBranding, getGoogleOAuthAccessToken, getPortfolioMediaIdFromUrl, getSmtpFailureExplanation, isEmailFaviconEnabled, resolveEmailBrandingUrls, sendMailWithTimeout, sendWithGmailApi, shouldRetrySmtpFallback, verifyGmailApiAccess } from '../services/emailService';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { AdminContentDraftModel, SiteContentModel } from '../models';
 import { getEmailConfig } from '../config/emailConfig';
@@ -56,6 +56,39 @@ test('email provider selection supports automatic Resend, Google OAuth, Gmail SM
     EMAIL_PASS: 'smtp-password',
   } as NodeJS.ProcessEnv);
   assert.equal(explicitSmtp.provider, 'smtp');
+});
+
+test('contact messages retain an actionable warning when email provider credentials are missing', async () => {
+  const previousProvider = process.env.EMAIL_PROVIDER;
+  const previousResendKey = process.env.RESEND_API_KEY;
+  process.env.EMAIL_PROVIDER = 'resend';
+  process.env.RESEND_API_KEY = '';
+
+  const email = `missing-provider-${Date.now()}@example.test`;
+  try {
+    const result = await new EmailService().handleContactSubmission({
+      name: 'Portfolio Visitor',
+      email,
+      subject: 'Email setup check',
+      message: 'Please record this message even without email configuration.',
+      timestamp: new Date().toISOString(),
+      ipAddress: '127.0.0.1',
+      userAgent: 'email-service-test',
+    });
+
+    const stored = contactDb.getByEmail(email)[0];
+    assert.equal(result.status, 'simulated');
+    assert.equal(result.emailSent, false);
+    assert.match(result.error || '', /EMAIL_PROVIDER requested resend.*credentials are missing/i);
+    assert.equal(stored.status, 'simulated');
+    assert.equal(stored.emailSent, false);
+    assert.equal(stored.error, result.error);
+  } finally {
+    if (previousProvider === undefined) delete process.env.EMAIL_PROVIDER;
+    else process.env.EMAIL_PROVIDER = previousProvider;
+    if (previousResendKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = previousResendKey;
+  }
 });
 
 test('Gmail OAuth delivery uses the Gmail HTTPS API and sends a valid base64url MIME message', async () => {

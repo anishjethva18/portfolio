@@ -333,7 +333,6 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
         setSocialPreviewAsset(null);
       }
       contentLoadedRef.current = true;
-      updateHiddenAppIds(data.draft.siteSettings?.disabledApps || []);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load portfolio content.');
     } finally {
@@ -406,7 +405,6 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     const handleDiscardUnsavedEdits = () => {
       if (savedDraftContent !== null) {
         setContent(clonePortfolioContent(savedDraftContent));
-        updateHiddenAppIds(savedDraftContent.siteSettings?.disabledApps || []);
       } else {
         void fetchContent();
       }
@@ -417,7 +415,7 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     };
     window.addEventListener('admin-discard-unsaved-edits', handleDiscardUnsavedEdits);
     return () => window.removeEventListener('admin-discard-unsaved-edits', handleDiscardUnsavedEdits);
-  }, [savedDraftContent, updateHiddenAppIds]);
+  }, [savedDraftContent]);
 
   const handlePreviewDraft = async () => {
     const previewWindow = window.open('about:blank', '_blank');
@@ -674,7 +672,6 @@ export const PortfolioManagement: React.FC<PortfolioManagementProps> = ({ onSave
     else disabledApps.add(appId);
     const nextDisabledApps = Array.from(disabledApps);
     updateSiteSettings('disabledApps', nextDisabledApps);
-    updateHiddenAppIds(nextDisabledApps as any);
   };
 
   const updateAnnouncement = (field: string, value: any) => {

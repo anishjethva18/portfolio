@@ -64,6 +64,7 @@ import {
 
 interface PhotosAppProps {
   filePath?: string;
+  cameraDirectView?: boolean;
   initialMediaId?: string;
   initialMediaUrl?: string;
   initialMediaName?: string;
@@ -168,6 +169,7 @@ const RenderMediaCover: React.FC<{
 
 export const MediaApp: React.FC<PhotosAppProps> = ({
   filePath,
+  cameraDirectView = false,
   initialMediaId,
   initialMediaUrl,
   initialMediaName,
@@ -485,7 +487,7 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
   const [selectedAlbumPath, setSelectedAlbumPath] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   // Keep navigation sidebar expanded by default
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(cameraDirectView);
   const [isAlbumsTreeOpen, setIsAlbumsTreeOpen] = useState(true);
 
   // Guarantee All Media by default on mount/open
@@ -1484,7 +1486,7 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
       )}
 
       {/* ================= 1. SIDEBAR NAVIGATION ================= */}
-      <div
+      {!cameraDirectView && <div
         className={`${
           isSidebarCollapsed ? 'hidden sm:flex sm:w-14' : 'absolute sm:relative inset-y-0 left-0 z-40 w-60 shadow-2xl sm:shadow-none'
         } shrink-0 border-r flex flex-col justify-between transition-all duration-200 select-none ${
@@ -1703,7 +1705,7 @@ export const MediaApp: React.FC<PhotosAppProps> = ({
               {!isSidebarCollapsed && <span>Settings</span>}
             </button>
           </div>
-        </div>
+        </div>}
 
         {/* ================= 2. MAIN CONTENT AREA ================= */}
         <div

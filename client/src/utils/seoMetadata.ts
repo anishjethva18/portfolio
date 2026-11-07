@@ -1,3 +1,5 @@
+import { getApplicationRoute } from './applicationRoutes';
+
 export interface SeoContent {
   profile?: {
     name?: unknown;
@@ -39,9 +41,6 @@ export interface SeoMetadata {
   twitterDescription: string;
 }
 
-const FALLBACK_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230078d4'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='Arial,sans-serif' font-size='38' font-weight='700' fill='white'%3EAJ%3C/text%3E%3C/svg%3E";
-const loadedFavicons = new Set<string>();
-const faviconRequestIds = new WeakMap<HTMLLinkElement, number>();
 const FAVICON_MIME_TYPES: Record<string, string> = {
   ico: 'image/x-icon',
   png: 'image/png',
@@ -65,6 +64,44 @@ function safeText(value: unknown, fallback: string, maxLength: number): string {
   if (typeof value !== 'string') return fallback;
   const text = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
   return text ? text.slice(0, maxLength) : fallback;
+}
+
+export function createRouteSeoContent(content: SeoContent, pathname: string, baseUrl: string): SeoContent {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  const settings = content.siteSettings || {};
+  const profileName = safeText(content.profile?.name, '', 160);
+  const siteName = safeText(settings.siteName, profileName, 160);
+  const siteTitle = safeText(settings.siteTitle, siteName, 120);
+  const routeDescription = path === '/app-info'
+    ? 'Learn about this interactive Windows 11 portfolio, its published applications, and how to get in touch.'
+    : path === '/privacy-policy'
+      ? 'Read the privacy policy for this portfolio, including information about contact submissions, analytics, browser storage, and service providers.'
+      : getApplicationRoute(path)?.description;
+
+  const canonicalBase = resolvePublicUrl(settings.canonicalUrl, baseUrl, baseUrl);
+  let canonicalUrl = '';
+  try {
+    const canonical = new URL(canonicalBase);
+    canonical.pathname = path;
+    canonical.search = '';
+    canonical.hash = '';
+    canonicalUrl = canonical.href;
+  } catch {
+    canonicalUrl = '';
+  }
+
+  return {
+    ...content,
+    siteSettings: {
+      ...settings,
+      siteName,
+      siteTitle,
+      metaDescription: routeDescription || settings.metaDescription,
+      canonicalUrl,
+      faviconUrl: resolvePublicUrl(settings.faviconUrl, baseUrl, ''),
+      socialImageUrl: resolvePublicUrl(settings.socialImageUrl, canonicalUrl || baseUrl, ''),
+    },
+  };
 }
 
 export function resolvePublicUrl(value: unknown, baseUrl: string, fallback: string): string {
@@ -182,6 +219,14 @@ function removeMeta(head: Document['head'], attribute: 'name' | 'property', key:
 }
 
 function applyFavicon(url: string, targetDocument: Document): void {
+  if (!url) {
+    targetDocument.head.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]')
+      .forEach((icon) => icon.remove());
+    return;
+  }
+
+  targetDocument.head.querySelectorAll('link[rel="shortcut icon"]')
+    .forEach((icon) => icon.remove());
   const icon = removeDuplicateElements(
     targetDocument.head,
     'link[rel="icon"]',
@@ -191,44 +236,12 @@ function applyFavicon(url: string, targetDocument: Document): void {
       return link;
     },
   );
-  if (!icon.hasAttribute('href')) {
-    icon.href = FALLBACK_FAVICON;
-    icon.type = 'image/svg+xml';
-  }
-  const requestId = (faviconRequestIds.get(icon) || 0) + 1;
-  faviconRequestIds.set(icon, requestId);
-
-  if (!url) {
-    icon.href = FALLBACK_FAVICON;
-    icon.type = 'image/svg+xml';
-    return;
-  }
-
   const faviconUrl = new URL(url, targetDocument.baseURI).href;
-  if (loadedFavicons.has(faviconUrl)) {
-    icon.href = faviconUrl;
-    return;
-  }
-
-  const ImageConstructor = targetDocument.defaultView?.Image;
-  if (!ImageConstructor) {
-    icon.href = faviconUrl;
-    return;
-  }
-
-  const image = new ImageConstructor();
-  image.onload = () => {
-    if (faviconRequestIds.get(icon) !== requestId) return;
-    loadedFavicons.add(faviconUrl);
-    icon.href = faviconUrl;
-    const mimeType = getFaviconMimeType(faviconUrl);
-    if (mimeType) icon.type = mimeType;
-    else icon.removeAttribute('type');
-  };
-  image.onerror = () => {
-    console.warn('[SEO] Configured favicon could not be loaded; keeping the immediate fallback.');
-  };
-  image.src = faviconUrl;
+  icon.href = faviconUrl;
+  const mimeType = getFaviconMimeType(faviconUrl);
+  if (mimeType) icon.type = mimeType;
+  else icon.removeAttribute('type');
+  icon.dataset.configuredFavicon = faviconUrl;
 }
 
 export function applyConfiguredFavicon(targetDocument = document): void {
@@ -301,6 +314,21 @@ export function applySeoMetadata(content: SeoContent, baseUrl: string, targetDoc
   structuredData.textContent = JSON.stringify(websiteData).replace(/</g, '\\u003c');
 
   return metadata;
+}
+
+export async function refreshPublishedRouteSeo(
+  pathname: string,
+  baseUrl: string,
+  targetDocument = document,
+): Promise<string> {
+  const response = await fetch('/api/seo-metadata', { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Published SEO metadata could not be loaded (HTTP ${response.status}).`);
+  const payload = await response.json() as { success?: boolean; published?: boolean; content?: SeoContent };
+  if (!payload.success || typeof payload.published !== 'boolean' || !payload.content) {
+    throw new Error('Published SEO metadata response is invalid.');
+  }
+  const content = createRouteSeoContent(payload.content, pathname, baseUrl);
+  return applySeoMetadata(content, baseUrl, targetDocument).siteName;
 }
 
 function escapeAttribute(value: string): string {
@@ -377,22 +405,17 @@ export function renderSeoMetadataHtml(html: string, content: SeoContent, baseUrl
     /<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/gi,
     `<link rel="canonical" href="${escapeAttribute(metadata.canonicalUrl)}" data-seo="canonical" />`,
   );
-  const initialFaviconType = metadata.faviconUrl
-    ? getFaviconMimeType(metadata.faviconUrl)
-    : 'image/svg+xml';
-  output = replaceHeadTag(
-    output,
-    /<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*>/gi,
-    `<link rel="icon" href="${escapeAttribute(metadata.faviconUrl || FALLBACK_FAVICON)}"${initialFaviconType ? ` type="${escapeAttribute(initialFaviconType)}"` : ''} data-seo="icon"${metadata.faviconUrl ? ` data-configured-favicon="${escapeAttribute(metadata.faviconUrl)}"` : ''} />`,
-  );
-  output = replaceHeadTag(
-    output,
-    /<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/gi,
-    metadata.faviconUrl
-      ? `<link rel="preload" as="image" href="${escapeAttribute(metadata.faviconUrl)}" data-seo-favicon-preload="true" />`
-      : '',
-  );
-
+  const faviconSelector = /<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*>/gi;
+  if (metadata.faviconUrl) {
+    const initialFaviconType = getFaviconMimeType(metadata.faviconUrl);
+    output = replaceHeadTag(
+      output,
+      faviconSelector,
+      `<link rel="icon" href="${escapeAttribute(metadata.faviconUrl)}"${initialFaviconType ? ` type="${escapeAttribute(initialFaviconType)}"` : ''} data-seo="icon" data-configured-favicon="${escapeAttribute(metadata.faviconUrl)}" />`,
+    );
+  } else {
+    output = output.replace(faviconSelector, '');
+  }
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
@@ -412,10 +435,7 @@ export function stripSeoMetadataHtml(html: string): string {
     .replace(/<meta\b(?=[^>]*\bproperty=["']og:[^"']+["'])[^>]*>/gi, '')
     .replace(/<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/gi, '')
     .replace(/<link\b(?=[^>]*\bdata-seo-favicon-preload=["'])[^>]*>/gi, '')
+    .replace(/<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*>/gi, '')
     .replace(/<script\b(?=[^>]*\bid=["']website-jsonld["'])[^>]*>[\s\S]*?<\/script>/gi, '');
-  output = output.replace(
-    /(<link\b(?=[^>]*\brel=["'](?:shortcut\s+)?icon["'])[^>]*?)\s+data-configured-favicon=["'][^"']*["']/gi,
-    '$1',
-  );
   return output;
 }

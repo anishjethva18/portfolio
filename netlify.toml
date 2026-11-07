@@ -5,7 +5,7 @@
 
 [[edge_functions]]
   function = "seo-metadata"
-  path = "/"
+  path = "/*"
 
 [[redirects]]
   from = "/social-preview.jpg"

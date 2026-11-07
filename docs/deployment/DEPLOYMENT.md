@@ -791,6 +791,9 @@ Follow this order so the frontend is not pointed at an unready backend:
    root base, build, and `client/dist` publish settings.
 7. **Connect frontend and backend.** Confirm the Netlify `/api/*` rewrite
    targets the new/current Render service; verify CORS and browser requests.
+   The SEO edge function also serves initial public HTML/metadata for
+   `/app-info` and `/privacy-policy`; verify both routes directly, including a
+   refresh, and confirm the root still opens the Windows Lock Screen.
 8. **Configure domains and HTTPS.** Set DNS using provider instructions,
    confirm Netlify HTTPS, update `APP_URL`/CORS, and redeploy if values changed.
 9. **Run the complete production checklist.** Test auth, contact/email, AI

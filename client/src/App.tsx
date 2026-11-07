@@ -14,17 +14,42 @@ import { AdminLoginScreen } from './components/apps/AdminLoginScreen';
 import { AdminDraftPreviewPage } from './components/apps/admin/AdminDraftPreviewPage';
 import { trackPortfolioAnalytics } from './utils/analytics';
 import { ConfirmDialogProvider } from './context/ConfirmDialogContext';
-import { applyConfiguredFavicon, applySeoMetadata } from './utils/seoMetadata';
+import { applyConfiguredFavicon, refreshPublishedRouteSeo } from './utils/seoMetadata';
 import { Construction, ShieldCheck, Clock3, Sparkles } from 'lucide-react';
 import { getAdminShortcut, matchesAdminShortcut } from './utils/adminShortcut';
 import PrivacyPolicy from './pages/PrivacyPolicy';
+import AppInfo from './pages/AppInfo';
+import {
+  getApplicationRoute,
+  getApplicationRouteById,
+  isApplicationRouteAvailable,
+  normalizeApplicationPath,
+} from './utils/applicationRoutes';
+import type { AppId } from './types';
 
 const OSMainContent: React.FC = () => {
-  const { windows, isBsod, powerState, settings, currentDesktopId, openApp, applyPublishedAppLayout } = useOS();
-  const { isLocked, login, unlockScreen } = useAuth();
+  const {
+    windows,
+    activeWindowId,
+    isBsod,
+    powerState,
+    settings,
+    currentDesktopId,
+    hiddenAppIds,
+    publishedAppAvailabilityReady,
+    openApp,
+    navigateToDesktop,
+    applyPublishedAppLayout,
+  } = useOS();
+  const { isLocked, login, lockScreen, unlockScreen } = useAuth();
   const trackedInitialPageView = React.useRef(false);
   const adminRouteHandled = React.useRef(false);
   const adminWindowSeen = React.useRef(false);
+  const [routeRevision, setRouteRevision] = React.useState(0);
+  const routeInitialized = React.useRef(false);
+  const suppressNextRouteSync = React.useRef(false);
+  const pendingRouteAppId = React.useRef<AppId | null>(null);
+  const lastHandledRoute = React.useRef('');
   const [maintenanceSettings, setMaintenanceSettings] = React.useState<{ enabled: boolean; message: string }>({ enabled: false, message: '' });
   const [maintenanceStatus, setMaintenanceStatus] = React.useState<'checking' | 'ready' | 'error'>('checking');
   const [isPasswordResetRoute] = React.useState(() => {
@@ -37,6 +62,7 @@ const OSMainContent: React.FC = () => {
     return !isAdminDraftPreviewRoute && (
       window.location.pathname === '/admin' ||
       window.location.pathname.startsWith('/admin/') ||
+      window.location.pathname === '/admin-control-center' ||
       window.location.hash === '#admin' ||
       params.get('app') === 'admin' ||
       params.get('admin') === 'true'
@@ -47,19 +73,6 @@ const OSMainContent: React.FC = () => {
     let active = true;
     let publishedAppLayoutApplied = false;
     applyConfiguredFavicon();
-    const refreshSeoMetadata = async () => {
-      try {
-        const response = await fetch('/api/seo-metadata', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`Published SEO metadata could not be loaded (HTTP ${response.status}).`);
-        const payload = await response.json();
-        if (!payload.success || typeof payload.published !== 'boolean' || !payload.content) {
-          throw new Error('Published SEO metadata response is invalid.');
-        }
-        if (active) applySeoMetadata(payload.content, window.location.href);
-      } catch (error) {
-        if (active) console.error('[App] Published SEO metadata could not be loaded.', error);
-      }
-    };
     const refreshMaintenanceSettings = async () => {
       try {
         const response = await fetch('/api/portfolio-content', { cache: 'no-store' });
@@ -85,13 +98,11 @@ const OSMainContent: React.FC = () => {
       }
     };
 
-    void refreshSeoMetadata();
     void refreshMaintenanceSettings();
     const handlePublishedContent = (event: Event) => {
       const content = (event as CustomEvent).detail;
       const settings = content?.siteSettings;
       if (!settings) return;
-      void refreshSeoMetadata();
       applyPublishedAppLayout(settings);
       setMaintenanceSettings({
         enabled: settings.maintenanceMode === true,
@@ -101,14 +112,32 @@ const OSMainContent: React.FC = () => {
     };
     window.addEventListener('portfolio-content-published', handlePublishedContent);
     window.addEventListener('portfolio-data-updated', refreshMaintenanceSettings);
-    window.addEventListener('portfolio-data-updated', refreshSeoMetadata);
     return () => {
       active = false;
       window.removeEventListener('portfolio-content-published', handlePublishedContent);
       window.removeEventListener('portfolio-data-updated', refreshMaintenanceSettings);
-      window.removeEventListener('portfolio-data-updated', refreshSeoMetadata);
     };
   }, [applyPublishedAppLayout]);
+
+  React.useEffect(() => {
+    let active = true;
+    const refreshSeoMetadata = async () => {
+      try {
+        if (active) await refreshPublishedRouteSeo(window.location.pathname, window.location.href);
+      } catch (error) {
+        if (active) console.error('[App] Published SEO metadata could not be loaded.', error);
+      }
+    };
+    applyConfiguredFavicon();
+    void refreshSeoMetadata();
+    window.addEventListener('portfolio-data-updated', refreshSeoMetadata);
+    window.addEventListener('portfolio-content-published', refreshSeoMetadata);
+    return () => {
+      active = false;
+      window.removeEventListener('portfolio-data-updated', refreshSeoMetadata);
+      window.removeEventListener('portfolio-content-published', refreshSeoMetadata);
+    };
+  }, [routeRevision]);
 
   React.useEffect(() => {
     const keepSelectMenuInsideViewport = (event: Event) => {
@@ -137,16 +166,17 @@ const OSMainContent: React.FC = () => {
   React.useEffect(() => {
     const checkAdminRoute = () => {
       if (isPasswordResetRoute || isAdminDraftPreviewRoute) return;
+      const path = window.location.pathname;
       const hash = window.location.hash;
       const search = new URLSearchParams(window.location.search);
-      const path = window.location.pathname;
-      const isAdminRoute = hash === '#admin' || search.get('app') === 'admin' || search.get('admin') === 'true'
-        || path === '/admin' || path.startsWith('/admin/');
+      const isAdminRoute = path === '/admin-control-center' || path === '/admin' || path.startsWith('/admin/')
+        || hash === '#admin' || search.get('app') === 'admin' || search.get('admin') === 'true';
       setSkipLockForAdmin(isAdminRoute);
       if (isAdminRoute) {
         if (!adminRouteHandled.current) {
           adminRouteHandled.current = true;
           adminWindowSeen.current = false;
+          void unlockScreen('');
           openApp('admin');
         }
       } else {
@@ -155,13 +185,11 @@ const OSMainContent: React.FC = () => {
       }
     };
     checkAdminRoute();
-    window.addEventListener('hashchange', checkAdminRoute);
     window.addEventListener('popstate', checkAdminRoute);
     return () => {
-      window.removeEventListener('hashchange', checkAdminRoute);
       window.removeEventListener('popstate', checkAdminRoute);
     };
-  }, [openApp, isPasswordResetRoute, isAdminDraftPreviewRoute]);
+  }, [openApp, unlockScreen, isPasswordResetRoute, isAdminDraftPreviewRoute]);
 
   React.useEffect(() => {
     if (!adminRouteHandled.current) return;
@@ -173,15 +201,132 @@ const OSMainContent: React.FC = () => {
     if (!adminWindowSeen.current) return;
 
     const url = new URL(window.location.href);
-    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) url.pathname = '/';
-    url.searchParams.delete('app');
-    url.searchParams.delete('admin');
-    if (url.hash === '#admin') url.hash = '';
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    if (
+      url.pathname === '/admin-control-center' ||
+      url.pathname === '/admin' ||
+      url.pathname.startsWith('/admin/')
+    ) {
+      url.pathname = '/home';
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+      setRouteRevision((revision) => revision + 1);
+    }
     adminRouteHandled.current = false;
     adminWindowSeen.current = false;
     setSkipLockForAdmin(false);
   }, [windows]);
+
+  React.useEffect(() => {
+    const handlePopState = () => {
+      suppressNextRouteSync.current = true;
+      setRouteRevision((revision) => revision + 1);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  React.useEffect(() => {
+    const path = normalizeApplicationPath(window.location.pathname);
+    const search = new URLSearchParams(window.location.search);
+    if (
+      path === '/admin-control-center' || path === '/admin' || path.startsWith('/admin/') ||
+      window.location.hash === '#admin' || search.get('app') === 'admin' || search.get('admin') === 'true'
+    ) {
+      routeInitialized.current = true;
+      return;
+    }
+    const routeKey = `${path}|${hiddenAppIds.join(',')}${path === '/' ? `|${isLocked}` : ''}`;
+
+    if (path === '/') {
+      routeInitialized.current = true;
+      lastHandledRoute.current = routeKey;
+      if (!isLocked) lockScreen();
+      navigateToDesktop();
+      return;
+    }
+
+    if (lastHandledRoute.current === routeKey) return;
+
+    if (path === '/home') {
+      routeInitialized.current = true;
+      lastHandledRoute.current = routeKey;
+      if (isLocked) void unlockScreen('');
+      suppressNextRouteSync.current = true;
+      navigateToDesktop();
+      return;
+    }
+
+    if (!publishedAppAvailabilityReady) return;
+
+    const route = getApplicationRoute(path);
+    if (route && !isApplicationRouteAvailable(route, hiddenAppIds)) {
+      const nextPath = '/home';
+      suppressNextRouteSync.current = true;
+      window.history.replaceState({}, document.title, nextPath);
+      navigateToDesktop();
+      routeInitialized.current = true;
+      lastHandledRoute.current = `${nextPath}|${hiddenAppIds.join(',')}`;
+      setRouteRevision((revision) => revision + 1);
+      return;
+    }
+
+    if (route) {
+      if (isLocked) return;
+      routeInitialized.current = true;
+      lastHandledRoute.current = routeKey;
+      pendingRouteAppId.current = route.appId;
+      suppressNextRouteSync.current = true;
+      openApp(route.appId);
+      return;
+    }
+
+    routeInitialized.current = true;
+    lastHandledRoute.current = routeKey;
+    if (path !== '/' && path !== '/home') {
+      suppressNextRouteSync.current = true;
+      window.history.replaceState({}, document.title, '/home');
+      setRouteRevision((revision) => revision + 1);
+    }
+  }, [
+    publishedAppAvailabilityReady,
+    hiddenAppIds,
+    routeRevision,
+    isLocked,
+    lockScreen,
+    unlockScreen,
+    openApp,
+    navigateToDesktop,
+  ]);
+
+  React.useEffect(() => {
+    if (!publishedAppAvailabilityReady) return;
+    if (isLocked) {
+      return;
+    }
+    if (!routeInitialized.current) return;
+    const currentPath = normalizeApplicationPath(window.location.pathname);
+    if (currentPath === '/') return;
+    const adminPath = currentPath === '/admin-control-center' || currentPath === '/admin' || currentPath.startsWith('/admin/');
+    const visibleAdminWindow = windows.some((window) => window.appId === 'admin' && !window.isMinimized);
+    if (adminPath && !visibleAdminWindow) return;
+    if (pendingRouteAppId.current) {
+      const pendingWindowIsOpen = windows.some((window) =>
+        window.appId === pendingRouteAppId.current && !window.isMinimized
+      );
+      if (!pendingWindowIsOpen) return;
+      pendingRouteAppId.current = null;
+    }
+    const activeWindow = windows.find((window) => window.id === activeWindowId && !window.isMinimized);
+    const nextPath = activeWindow ? getApplicationRouteById(activeWindow.appId)?.path || '/home' : '/home';
+    if (suppressNextRouteSync.current) {
+      if (currentPath === nextPath) {
+        suppressNextRouteSync.current = false;
+      }
+      return;
+    }
+    if (currentPath === nextPath) return;
+    window.history.pushState({}, document.title, nextPath);
+    setRouteRevision((revision) => revision + 1);
+  }, [windows, activeWindowId, isLocked, publishedAppAvailabilityReady]);
 
   React.useEffect(() => {
     const handleAdminShortcut = (event: KeyboardEvent) => {
@@ -189,10 +334,11 @@ const OSMainContent: React.FC = () => {
       event.preventDefault();
       event.stopPropagation();
       const url = new URL(window.location.href);
-      url.pathname = '/admin';
-      url.searchParams.delete('app');
-      url.searchParams.delete('admin');
+      url.pathname = '/admin-control-center';
+      url.search = '';
+      url.hash = '';
       window.history.pushState({}, document.title, `${url.pathname}${url.search}`);
+      setRouteRevision((revision) => revision + 1);
       adminRouteHandled.current = true;
       adminWindowSeen.current = false;
       setSkipLockForAdmin(true);
@@ -205,8 +351,9 @@ const OSMainContent: React.FC = () => {
 
   React.useEffect(() => {
     if (trackedInitialPageView.current || isPasswordResetRoute || isAdminDraftPreviewRoute) return;
-    const hash = window.location.hash.toLowerCase();
-    const isAdminRoute = window.location.pathname.startsWith('/admin') || hash === '#admin' || new URLSearchParams(window.location.search).get('app') === 'admin';
+    const isAdminRoute = window.location.pathname.startsWith('/admin')
+      || window.location.hash.toLowerCase() === '#admin'
+      || new URLSearchParams(window.location.search).get('app') === 'admin';
     if (isAdminRoute) return;
     trackedInitialPageView.current = true;
     trackPortfolioAnalytics('PORTFOLIO_PAGE_VIEW', 'navigation', window.location.pathname || '/');
@@ -220,7 +367,9 @@ const OSMainContent: React.FC = () => {
           if (result.success) {
             const url = new URL(window.location.href);
             url.searchParams.delete('resetToken');
-            url.searchParams.set('app', 'admin');
+            url.searchParams.delete('app');
+            url.searchParams.delete('admin');
+            url.pathname = '/admin-control-center';
             const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
             hashParams.delete('resetToken');
             url.hash = hashParams.toString();
@@ -254,12 +403,18 @@ const OSMainContent: React.FC = () => {
         {isLocked && !skipLockForAdmin && (
           <LockScreen
             wallpaper={settings.customLockScreenUrl || 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=2560&auto=format&fit=crop&q=90'}
+            onUnlock={() => {
+              if (normalizeApplicationPath(window.location.pathname) !== '/') return;
+              window.history.pushState({}, document.title, '/home');
+              setRouteRevision((revision) => revision + 1);
+            }}
           />
         )}
       </AnimatePresence>
       <Desktop>
         <AnimatePresence>
           {windows
+            .filter((win) => win.appId === 'admin' || (publishedAppAvailabilityReady && !hiddenAppIds.includes(win.appId)))
             .filter((win) => !win.desktopId || win.desktopId === currentDesktopId)
             .map((win) => (
               <WindowFrame key={win.id} windowState={win}>
@@ -313,9 +468,11 @@ const OSMainContent: React.FC = () => {
 };
 
 export default function App() {
-  if (window.location.pathname.replace(/\/+$/, '') === '/privacy-policy') {
+  const pathname = normalizeApplicationPath(window.location.pathname);
+  if (pathname === '/privacy-policy') {
     return <PrivacyPolicy />;
   }
+  if (pathname === '/app-info') return <AppInfo />;
 
   return (
     <AuthProvider>

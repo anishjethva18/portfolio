@@ -64,6 +64,9 @@ export const CameraApp: React.FC = () => {
   const [showProControls, setShowProControls] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [recentCapturePreview, setRecentCapturePreview] = useState('');
+  const proControlsRef = useRef<HTMLDivElement | null>(null);
+  const pinchStartDistanceRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef(zoomLevel);
 
   // Editable Save Locations
   const [photoSavePath, setPhotoSavePath] = useState<string>(D_DRIVE_FOLDER_PATHS.photoCaptures);
@@ -248,8 +251,11 @@ export const CameraApp: React.FC = () => {
     const last = sorted[0];
     const isVideo = ['mp4', 'webm', 'mkv', 'avi', 'mov'].includes((last.extension || '').toLowerCase());
     return {
+      id: last.id,
       path: last.path,
       url: last.content || '',
+      name: last.name,
+      extension: last.extension,
       type: isVideo ? ('video' as const) : ('photo' as const),
       localCaptureId: last.localCaptureId,
       captureStatus: last.captureStatus,
@@ -275,6 +281,49 @@ export const CameraApp: React.FC = () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [lastMedia?.localCaptureId, lastMedia?.url]);
+
+  useEffect(() => {
+    if (!showProControls) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !proControlsRef.current?.contains(event.target)) {
+        setShowProControls(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowProControls(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [showProControls]);
+
+  const handleViewfinderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2) return;
+    const [first, second] = Array.from(event.touches);
+    pinchStartDistanceRef.current = Math.hypot(
+      second.clientX - first.clientX,
+      second.clientY - first.clientY,
+    );
+    pinchStartZoomRef.current = zoomLevel;
+  };
+
+  const handleViewfinderTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || !pinchStartDistanceRef.current) return;
+    event.preventDefault();
+    const [first, second] = Array.from(event.touches);
+    const distance = Math.hypot(
+      second.clientX - first.clientX,
+      second.clientY - first.clientY,
+    );
+    setZoomLevel(Math.min(5, Math.max(1, pinchStartZoomRef.current * distance / pinchStartDistanceRef.current)));
+  };
+
+  const handleViewfinderTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length < 2) pinchStartDistanceRef.current = null;
+  };
 
   // Shutter flash animation effect
   const [shutterFlash, setShutterFlash] = useState(false);
@@ -831,6 +880,12 @@ export const CameraApp: React.FC = () => {
         sHeight = srcW / targetAspect;
         sy = (srcH - sHeight) / 2;
       }
+      const zoomedWidth = sWidth / zoomLevel;
+      const zoomedHeight = sHeight / zoomLevel;
+      sx += (sWidth - zoomedWidth) / 2;
+      sy += (sHeight - zoomedHeight) / 2;
+      sWidth = zoomedWidth;
+      sHeight = zoomedHeight;
 
       const ctx = canvas.getContext('2d');
       if (ctx) {
@@ -1225,9 +1280,18 @@ export const CameraApp: React.FC = () => {
 
         {/* Pro Mode Floating Sliders */}
         {showProControls && (
-          <div className="absolute top-16 left-4 z-30 bg-black/85 backdrop-blur-md p-3.5 rounded-2xl border border-white/15 shadow-xl space-y-3 w-64 text-xs animate-in slide-in-from-top-2">
+          <div
+            ref={proControlsRef}
+            role="dialog"
+            aria-label="Brightness and contrast controls"
+            className={`absolute top-16 left-4 z-30 backdrop-blur-md p-3.5 rounded-2xl border shadow-xl space-y-3 w-64 text-xs animate-in slide-in-from-top-2 ${
+              isLight
+                ? 'bg-white/95 border-slate-300 text-slate-900'
+                : 'bg-black/85 border-white/15 text-slate-100'
+            }`}
+          >
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className={`flex justify-between text-[11px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                 <span className="flex items-center gap-1">
                   <Sun className="w-3 h-3 text-amber-400" /> Brightness
                 </span>
@@ -1239,11 +1303,11 @@ export const CameraApp: React.FC = () => {
                 max="150"
                 value={brightness}
                 onChange={(e) => setBrightness(Number(e.target.value))}
-                className="w-full accent-cyan-400 h-1 bg-white/20 rounded cursor-pointer"
+                className={`w-full h-1 rounded cursor-pointer ${isLight ? 'accent-cyan-600 bg-slate-200' : 'accent-cyan-400 bg-white/20'}`}
               />
             </div>
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className={`flex justify-between text-[11px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                 <span>Contrast</span>
                 <span className="font-mono">{contrast}%</span>
               </div>
@@ -1253,14 +1317,20 @@ export const CameraApp: React.FC = () => {
                 max="150"
                 value={contrast}
                 onChange={(e) => setContrast(Number(e.target.value))}
-                className="w-full accent-cyan-400 h-1 bg-white/20 rounded cursor-pointer"
+                className={`w-full h-1 rounded cursor-pointer ${isLight ? 'accent-cyan-600 bg-slate-200' : 'accent-cyan-400 bg-white/20'}`}
               />
             </div>
           </div>
         )}
 
         {/* Viewfinder Video Element with Aspect Ratio Framing Mask */}
-        <div className="relative flex-1 flex items-center justify-center overflow-hidden">
+        <div
+          className="relative flex-1 flex items-center justify-center overflow-hidden touch-none"
+          onTouchStart={handleViewfinderTouchStart}
+          onTouchMove={handleViewfinderTouchMove}
+          onTouchEnd={handleViewfinderTouchEnd}
+          onTouchCancel={handleViewfinderTouchEnd}
+        >
           {!isVirtualCamera && stream && (
             <video
               ref={videoRef}
@@ -1498,7 +1568,11 @@ export const CameraApp: React.FC = () => {
         <div className="flex flex-col items-center gap-1 sm:gap-2.5 shrink-0">
           {lastMedia ? (
             <div
-              onClick={() => openApp('photos', { filePath: lastMedia.path })}
+              onClick={() => openApp('photos', {
+                filePath: lastMedia.path,
+                initialMediaId: lastMedia.id,
+                cameraDirectView: true,
+              })}
               className={`group relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl overflow-hidden border-2 shadow-md cursor-pointer transition-all hover:scale-105 ${
                 isLight ? 'border-slate-400 hover:border-cyan-600' : 'border-white/20 hover:border-cyan-400'
               }`}

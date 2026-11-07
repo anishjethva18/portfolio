@@ -932,6 +932,8 @@ export class EmailService {
 
     // Use a simulated response when SMTP is not configured.
     if (config.provider === 'dev_mock') {
+      const deliveryWarning = config.diagnosticDetails?.reason
+        || 'Email delivery is not configured. Configure an email provider to enable delivery.';
       console.log('====================================================');
       console.log('📧 [PORTFOLIO OS CONTACT MESSAGE RECORDED (DEV MODE)]');
       console.log(`ID: ${messageId}`);
@@ -940,7 +942,7 @@ export class EmailService {
       console.log(`Subject: ${data.subject}`);
       console.log('====================================================');
 
-      contactDb.updateStatus(messageId, 'simulated', false);
+      contactDb.updateStatus(messageId, 'simulated', false, deliveryWarning);
       return {
         success: true,
         messageId,
@@ -949,7 +951,8 @@ export class EmailService {
         emailSent: false,
         provider: 'Dev/Mock Store',
         receiver: config.receiverEmail,
-        note: `Message stored in portfolio database for ${config.receiverEmail}. Configure an email provider to dispatch live emails.`,
+        error: deliveryWarning,
+        note: `Message stored in portfolio database for ${config.receiverEmail}. ${deliveryWarning}`,
       };
     }
 
@@ -966,7 +969,9 @@ export class EmailService {
       return this.sendViaResend(config, data, emailHtml, receiptHtml, messageId, canonicalUrl);
     }
 
-    contactDb.updateStatus(messageId, 'simulated', false);
+    const deliveryWarning = config.diagnosticDetails?.reason
+      || 'Email delivery is not configured. Configure an email provider to enable delivery.';
+    contactDb.updateStatus(messageId, 'simulated', false, deliveryWarning);
     return {
       success: true,
       messageId,
@@ -975,7 +980,8 @@ export class EmailService {
       emailSent: false,
       provider: 'Dev/Mock Store',
       receiver: config.receiverEmail,
-      note: 'Message stored in database.',
+      error: deliveryWarning,
+      note: `Message stored in database. ${deliveryWarning}`,
     };
   }
 

@@ -88,9 +88,15 @@ export const Desktop: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   const [dragOverCell, setDragOverCell] = useState<{ gridX: number; gridY: number } | null>(null);
 
   React.useEffect(() => {
-    const updateViewportHeight = () => setViewportHeight(window.innerHeight);
+    const updateViewportHeight = () => {
+      setViewportHeight(window.visualViewport?.height ?? window.innerHeight);
+    };
     window.addEventListener('resize', updateViewportHeight);
-    return () => window.removeEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('resize', updateViewportHeight);
+    return () => {
+      window.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+    };
   }, []);
 
   // Live website content & banner

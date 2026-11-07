@@ -13,6 +13,7 @@ interface Contact {
     message: string;
     timestamp: string;
     status: 'delivered' | 'failed' | 'queued' | 'simulated' | 'replied';
+    error?: string;
     replied?: boolean;
     repliedAt?: string;
     replyMessage?: string;
@@ -272,6 +273,28 @@ export const ContactManagement: React.FC<{
                             <h4 className="mb-2 text-xs font-semibold text-slate-700">Full message</h4>
                             <p className="whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800">{viewingContact.message}</p>
                         </div>
+                        {(viewingContact.status === 'failed' || viewingContact.status === 'simulated' || viewingContact.error) && (
+                            <div
+                                role="status"
+                                className={`rounded-xl border p-4 text-sm ${
+                                    viewingContact.status === 'failed'
+                                        ? 'border-rose-200 bg-rose-50 text-rose-900'
+                                        : 'border-amber-200 bg-amber-50 text-amber-900'
+                                }`}
+                            >
+                                <h4 className="flex items-center gap-2 font-semibold">
+                                    <AlertCircle size={15} className="shrink-0" />
+                                    {viewingContact.status === 'failed' ? 'Email delivery failed' : 'Email delivery is not configured'}
+                                </h4>
+                                <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed">
+                                    {viewingContact.error || (
+                                        viewingContact.status === 'simulated'
+                                            ? 'This message was saved, but no email provider is configured to deliver it.'
+                                            : 'The delivery provider did not return a diagnostic. Check the email provider configuration and server logs.'
+                                    )}
+                                </p>
+                            </div>
+                        )}
                         {viewingContactReplies.length > 0 && (
                             <div>
                                 <h4 className="mb-2 text-xs font-semibold text-slate-700">Your replies ({viewingContactReplies.length})</h4>

@@ -5,7 +5,8 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import { connectMongo, disconnectMongo } from '../config/dbConfig';
 import { renderHomepageMetadata } from '../../client/edge-functions/seo-metadata';
-import { applyConfiguredFavicon, buildSeoMetadata, renderSeoMetadataHtml, stripSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
+import { applyConfiguredFavicon, buildSeoMetadata, createRouteSeoContent, renderSeoMetadataHtml, stripSeoMetadataHtml } from '../../client/src/utils/seoMetadata';
+import { APPLICATION_ROUTES } from '../../client/src/utils/applicationRoutes';
 import { AdminContentDraftModel, AdminContentRevisionModel, SiteContentModel } from '../models';
 import { contentStudioRouter } from '../routes/contentStudio';
 import { contentStudioService } from '../services/contentStudioService';
@@ -38,70 +39,41 @@ const publishedContent = {
 };
 
 function createFaviconDocument(configuredFavicon: string) {
-  const attributes = new Map<string, string>();
-  const fallback = 'data:image/svg+xml,immediate-aj-fallback';
   const icon = {
     rel: 'icon',
-    href: fallback,
-    type: 'image/svg+xml',
+    href: '',
+    type: '',
     dataset: { configuredFavicon },
     parentElement: {},
-    hasAttribute: (name: string) => name === 'href' || attributes.has(name),
     setAttribute: (name: string, value: string) => {
       if (name === 'href') icon.href = value;
-      else attributes.set(name, value);
     },
     removeAttribute: (name: string) => {
       if (name === 'href') icon.href = '';
-      else attributes.delete(name);
     },
+    remove: () => undefined,
   } as unknown as HTMLLinkElement;
-  const pendingImages: Array<{
-    src: string;
-    onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
-    onerror: ((this: GlobalEventHandlers, event: Event) => unknown) | null;
-  }> = [];
-  class MockImage {
-    src = '';
-    onload: ((this: GlobalEventHandlers, event: Event) => unknown) | null = null;
-    onerror: ((this: GlobalEventHandlers, event: Event) => unknown) | null = null;
-
-    constructor() {
-      pendingImages.push(this);
-    }
-  }
   const head = {
-    querySelectorAll: <T extends Element>() => [icon] as unknown as NodeListOf<T>,
+    querySelectorAll: <T extends Element>(selector: string) =>
+      (selector.includes('shortcut') ? [] : [icon]) as unknown as NodeListOf<T>,
     querySelector: () => icon,
     appendChild: (element: Node) => element,
   };
   const document = {
     baseURI: 'https://portfolio.example.test/',
     head,
-    defaultView: { Image: MockImage },
     createElement: () => icon,
   } as unknown as Document;
-  return { document, icon, pendingImages, fallback };
+  return { document, icon };
 }
 
-test('cached website favicon replaces the inline fallback only after its image loads', () => {
+test('published website favicon is applied immediately without a fallback preload', () => {
   const configuredUrl = 'https://portfolio.example.test/cached-icon.png?test=success';
-  const { document, icon, pendingImages, fallback } = createFaviconDocument(configuredUrl);
+  const { document, icon } = createFaviconDocument(configuredUrl);
 
   applyConfiguredFavicon(document);
-  assert.equal(icon.href, fallback);
-  assert.equal(pendingImages[0].src, configuredUrl);
-  pendingImages[0].onload?.call(pendingImages[0] as unknown as GlobalEventHandlers, new Event('load'));
   assert.equal(icon.href, configuredUrl);
-});
-
-test('failed website favicon loading leaves the inline fallback in place', () => {
-  const configuredUrl = 'https://portfolio.example.test/missing-icon.png?test=failure';
-  const { document, icon, pendingImages, fallback } = createFaviconDocument(configuredUrl);
-
-  applyConfiguredFavicon(document);
-  pendingImages[0].onerror?.call(pendingImages[0] as unknown as GlobalEventHandlers, new Event('error'));
-  assert.equal(icon.href, fallback);
+  assert.equal(icon.dataset.configuredFavicon, configuredUrl);
 });
 
 test('homepage metadata is present in the initial HTML exactly once', async () => {
@@ -146,7 +118,6 @@ test('homepage metadata is present in the initial HTML exactly once', async () =
   assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/"/);
   assert.match(rendered, /rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png" type="image\/png"/);
   assert.match(rendered, /data-configured-favicon="https:\/\/portfolio\.example\.test\/favicon\.png"/);
-  assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
   assert.match(rendered, /name="twitter:title" content="Published Homepage Title"/);
   assert.match(rendered, /name="twitter:description" content="Published homepage description\."/);
   assert.doesNotMatch(rendered, /Legacy Open Graph override|Legacy Twitter override/);
@@ -193,7 +164,6 @@ test('homepage metadata replaces duplicate tags and makes configured image URLs 
 
   for (const url of [
     rendered.match(/data-configured-favicon="([^"]+)"/)?.[1],
-    rendered.match(/rel="preload" as="image" href="([^"]+)"/)?.[1],
     rendered.match(/property="og:image" content="([^"]+)"/)?.[1],
     rendered.match(/name="twitter:image" content="([^"]+)"/)?.[1],
   ]) {
@@ -207,7 +177,27 @@ test('homepage HTML serves the configured favicon before JavaScript runs', async
   const rendered = renderSeoMetadataHtml(html, publishedContent, 'https://portfolio.example.test/');
   assert.equal(rendered.match(/<link rel="icon"/g)?.length, 1);
   assert.match(rendered, /<link rel="icon" href="https:\/\/portfolio\.example\.test\/favicon\.png" type="image\/png"/);
-  assert.match(rendered, /rel="preload" as="image" href="https:\/\/portfolio\.example\.test\/favicon\.png"/);
+  assert.doesNotMatch(rendered, /data:image\/svg\+xml/);
+});
+
+test('route metadata keeps published global branding while adapting canonical URL and description', () => {
+  const routeContent = createRouteSeoContent(
+    publishedContent,
+    '/projects',
+    'https://request.example.test/projects',
+  );
+  const rendered = renderSeoMetadataHtml(
+    '<html><head><title>Shell</title></head><body></body></html>',
+    routeContent,
+    'https://request.example.test/projects',
+  );
+
+  assert.match(rendered, /<title data-seo="title">Published Homepage Title<\/title>/);
+  assert.match(rendered, /property="og:site_name" content="Published Site Name"/);
+  assert.match(rendered, /name="description" content="Browse selected projects and published work\."/);
+  assert.match(rendered, /rel="canonical" href="https:\/\/portfolio\.example\.test\/projects"/);
+  assert.match(rendered, /rel="icon" href="https:\/\/request\.example\.test\/favicon\.png"/);
+  assert.match(rendered, /property="og:image" content="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/file-original-social-image"/);
 });
 
 test('homepage metadata removes stale image dimensions when the published image has none', async () => {
@@ -250,6 +240,12 @@ test('empty settings use safe absolute defaults and untrusted text is escaped', 
   assert.equal(legacyOverrides.openGraphDescription, 'Admin page description');
   assert.equal(legacyOverrides.twitterDescription, 'Admin page description');
   assert.equal(legacyOverrides.socialImageUrl, 'https://portfolio.example.test/api/portfolio-media/file-original-social-image');
+  const noFavicon = renderSeoMetadataHtml(
+    '<html><head><link rel="icon" href="/template.svg" /></head><body></body></html>',
+    {},
+    'https://portfolio.example.test/',
+  );
+  assert.doesNotMatch(noFavicon, /rel="icon"|data:image\/svg\+xml/);
   assert.equal(buildSeoMetadata({
     profile: { website: 'https://profile.example.test/' },
     siteSettings: {},
@@ -290,7 +286,7 @@ test('unpublished SEO produces clean HTML without title, social metadata, images
 
   assert.doesNotMatch(cleaned, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld|rel="canonical"/);
   assert.doesNotMatch(cleaned, /SEO metadata not published|No published SEO description is available|avatar\.png/);
-  assert.match(cleaned, /rel="icon" href="data:image\/svg\+xml,/);
+  assert.doesNotMatch(cleaned, /rel="icon"|data:image\/svg\+xml/);
 });
 
 test('Netlify homepage edge handler uses the public published metadata endpoint', async () => {
@@ -320,6 +316,48 @@ test('Netlify homepage edge handler uses the public published metadata endpoint'
     assert.match(html, /Published Homepage Title/);
     assert.match(html, /Published homepage description\./);
     assert.doesNotMatch(html, /Legacy Open Graph override|Legacy Twitter override/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Netlify edge metadata applies one published favicon to every OS and admin route', async () => {
+  const originalFetch = globalThis.fetch;
+  const routes = ['/', '/home', '/app-info', '/privacy-policy', '/admin', ...APPLICATION_ROUTES.map((route) => route.path)];
+  globalThis.fetch = async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path === '/api/profile') {
+      return new Response(JSON.stringify({ name: 'Portfolio Owner' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    assert.equal(path, '/api/seo-metadata');
+    return new Response(JSON.stringify({ success: true, published: true, content: publishedContent }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    for (const path of routes) {
+      const response = await renderHomepageMetadata(
+        new Request(`https://portfolio.example.test${path}`),
+        {
+          next: async () => new Response(
+            '<html><head></head><body><div id="root"></div></body></html>',
+            { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+          ),
+        },
+      );
+      const html = await response.text();
+      assert.equal(response.status, 200, `expected metadata response for ${path}`);
+      assert.equal(
+        html.match(/<link rel="icon" href="([^"]+)"/)?.[1],
+        'https://portfolio.example.test/favicon.png',
+        `expected published favicon on ${path}`,
+      );
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -396,7 +434,7 @@ test('Netlify returns clean HTML when the published SEO record does not exist', 
     assert.equal(response.status, 200);
     assert.doesNotMatch(rendered, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld/);
     assert.doesNotMatch(rendered, /SEO metadata not published|No published SEO description is available|avatar\.png/);
-    assert.match(rendered, /rel="icon" href="data:image\/svg\+xml,/);
+    assert.doesNotMatch(rendered, /rel="icon"|data:image\/svg\+xml/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -437,7 +475,7 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
   assert.ok(address && typeof address !== 'string');
 
   const originalFetch = globalThis.fetch;
-  const seoContent = (title: string, imageUrl: string) => ({
+  const seoContent = (title: string, imageUrl: string, faviconUrl: string) => ({
     profile: {
       name: 'SEO Regression Owner',
       title: 'Published Engineer',
@@ -451,7 +489,7 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
       openGraphTitle: `Ignored Open Graph ${title}`,
       openGraphDescription: `Ignored Open Graph description for ${title}.`,
       canonicalUrl: 'https://portfolio.example.test/',
-      faviconUrl: '/published-favicon.png',
+      faviconUrl,
       socialImageUrl: imageUrl,
       socialImageAlt: `Preview for ${title}.`,
       twitterCard: 'summary',
@@ -492,7 +530,9 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
     assert.doesNotMatch(unpublished.html, /<title\b|name="description"|property="og:|name="twitter:|website-jsonld/);
     assert.doesNotMatch(unpublished.html, /SEO metadata not published|No published SEO description is available|avatar\.png/);
 
-    const firstDraft = seoContent('First Published Title', 'https://images.example.test/first-preview.jpg');
+    const firstFavicon = '/api/portfolio-media/favicon.png?id=file-first';
+    const secondFavicon = '/api/portfolio-media/favicon.png?id=file-second';
+    const firstDraft = seoContent('First Published Title', 'https://images.example.test/first-preview.jpg', firstFavicon);
     await contentStudioService.saveDraft(firstDraft, 'seo-metadata-regression', {});
     const beforeFirstPublish = await renderLiveHtml();
     assert.doesNotMatch(beforeFirstPublish.html, /First Published Title|first-preview\.jpg/);
@@ -516,26 +556,28 @@ test('initial HTML follows only the latest published SEO settings, never drafts'
     assert.match(firstPublished.html, /name="twitter:card" content="summary_large_image"/);
     assert.match(firstPublished.html, /name="twitter:title" content="First Published Title"/);
     assert.match(firstPublished.html, /name="twitter:description" content="Description for First Published Title\."/);
-    assert.match(firstPublished.html, /rel="icon" href="https:\/\/portfolio\.example\.test\/published-favicon\.png"/);
-    assert.match(firstPublished.html, /data-configured-favicon="https:\/\/portfolio\.example\.test\/published-favicon\.png"/);
+    assert.match(firstPublished.html, /rel="icon" href="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/favicon\.png\?id=file-first"/);
+    assert.match(firstPublished.html, /data-configured-favicon="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/favicon\.png\?id=file-first"/);
     const websiteData = firstPublished.html.match(/<script id="website-jsonld" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
     assert.ok(websiteData);
     assert.deepEqual(JSON.parse(websiteData).alternateName, ['Published SEO Regression Site Portfolio']);
     assert.doesNotMatch(firstPublished.html, /Developer Portfolio|Interactive developer portfolio|avatar\.png/);
 
-    const secondDraft = seoContent('Second Published Title', 'https://images.example.test/second-preview.jpg');
+    const secondDraft = seoContent('Second Published Title', 'https://images.example.test/second-preview.jpg', secondFavicon);
     await contentStudioService.saveDraft(secondDraft, 'seo-metadata-regression', firstDraft);
     const beforeSecondPublish = await renderLiveHtml();
     assert.match(beforeSecondPublish.html, /First Published Title/);
     assert.match(beforeSecondPublish.html, /first-preview\.jpg/);
+    assert.match(beforeSecondPublish.html, /id=file-first/);
     assert.doesNotMatch(beforeSecondPublish.html, /Second Published Title|second-preview\.jpg/);
 
     await contentStudioService.publishDraft('seo-metadata-regression');
     const secondPublished = await renderLiveHtml();
     assert.match(secondPublished.html, /<title data-seo="title">Second Published Title<\/title>/);
     assert.match(secondPublished.html, /property="og:image" content="https:\/\/images\.example\.test\/second-preview\.jpg"/);
+    assert.match(secondPublished.html, /rel="icon" href="https:\/\/portfolio\.example\.test\/api\/portfolio-media\/favicon\.png\?id=file-second"/);
     assert.match(secondPublished.html, /name="twitter:title" content="Second Published Title"/);
-    assert.doesNotMatch(secondPublished.html, /First Published Title|first-preview\.jpg/);
+    assert.doesNotMatch(secondPublished.html, /First Published Title|first-preview\.jpg|id=file-first/);
   } finally {
     globalThis.fetch = originalFetch;
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -567,7 +609,7 @@ test('Netlify proxies only generated social formats and preserves API and SEO ro
   assert.equal(new URL(seoApiTarget).origin, 'https://portfolio-ub24.onrender.com');
   assert.equal(new URL(seoApiTarget).pathname, '/api/seo-metadata');
   assert.match(config, /edge_functions = "client\/edge-functions"/);
-  assert.match(config, /function = "seo-metadata"\s+path = "\/"/);
+  assert.match(config, /function = "seo-metadata"\s+path = "\/\*"/);
   assert.ok(config.indexOf('from = "/api/*"') < config.indexOf('from = "/*"'));
 });
 
