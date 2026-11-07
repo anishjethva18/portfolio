@@ -871,79 +871,11 @@ adminRouter.get('/users', requireAdmin, async (req: AuthenticatedRequest, res: R
 });
 
 adminRouter.post('/users/migrate-to-admin', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const legacyUsers = await UserModel.find({ role: 'user' }).lean();
-    if (legacyUsers.length === 0) {
-      res.json({ success: true, migratedCount: 0 });
-      return;
-    }
-
-    const updatedAt = new Date().toISOString();
-    const userIds = legacyUsers.map((user) => user.id);
-    const result = await UserModel.updateMany(
-      { id: { $in: userIds }, role: 'user' },
-      { $set: { role: 'admin', updatedAt } },
-    );
-    for (const user of legacyUsers) {
-      const cachedUser = db.users.get(user.id);
-      if (cachedUser) db.users.set(user.id, { ...cachedUser, role: 'admin', updatedAt });
-    }
-
-    await Promise.all(userIds.map((userId) => sessionService.revokeAllUserSessions(userId)));
-    await recordAudit(
-      req,
-      'MIGRATE_ROLES',
-      'User',
-      undefined,
-      `Converted ${result.modifiedCount} legacy user account(s) to administrator accounts.`,
-    );
-    res.json({ success: true, migratedCount: result.modifiedCount });
-  } catch (err: any) {
-    res.status(503).json({ success: false, error: err.message || 'Legacy accounts could not be converted to administrators.' });
-  }
+  res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
 });
 
 adminRouter.post('/users', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const role: 'admin' = 'admin';
-    if (req.body?.role !== undefined && req.body.role !== 'admin') {
-      res.status(422).json({ success: false, error: 'Only administrator accounts can be created.' });
-      return;
-    }
-    if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-      res.status(422).json({ success: false, error: 'Provide a valid name and email address.' });
-      return;
-    }
-    const minPasswordLength = 8;
-    if (password.length < minPasswordLength || password.length > 1024) {
-      res.status(422).json({ success: false, error: `Password must contain between ${minPasswordLength} and 1,024 characters.` });
-      return;
-    }
-    if (await UserModel.exists({ email })) {
-      res.status(409).json({ success: false, error: 'An account with this email already exists.' });
-      return;
-    }
-    const now = new Date().toISOString();
-    const user = {
-      id: `usr_${crypto.randomUUID()}`,
-      email,
-      name,
-      role,
-      passwordHash: await authService.hashPassword(password),
-      createdAt: now,
-      updatedAt: now,
-      disabled: false,
-    };
-    await UserModel.create(user);
-    db.users.set(user.id, user);
-    await recordAudit(req, 'CREATE', 'User', user.id, `Created ${role} account: ${email}`);
-    res.status(201).json({ success: true, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
-  } catch (err: any) {
-    res.status(503).json({ success: false, error: err.message || 'User account could not be created.' });
-  }
+  res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
 });
 
 adminRouter.put('/users/:id/role', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -961,6 +893,10 @@ adminRouter.put('/users/:id/role', requireAdmin, async (req: AuthenticatedReques
     const user = await UserModel.findOne({ id }).lean();
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found.' });
+      return;
+    }
+    if (user.role !== 'admin') {
+      res.status(409).json({ success: false, error: 'Additional administrator accounts are not allowed.' });
       return;
     }
     const roleChanged = user.role !== role;
@@ -2279,9 +2215,16 @@ adminRouter.post('/backup/restore', requireAdmin, async (req: AuthenticatedReque
 
       if (Array.isArray(collections.users)) {
         for (const user of collections.users) {
-          if (!user || typeof user.id !== 'string' || typeof user.email !== 'string' || user.id === req.user!.userId) continue;
-          await UserModel.updateOne({ id: user.id }, { $set: user }, { upsert: true });
-          db.users.set(user.id, user);
+          if (
+            !user ||
+            typeof user.id !== 'string' ||
+            typeof user.email !== 'string' ||
+            user.id === req.user!.userId ||
+            user.role === 'admin'
+          ) continue;
+          const safeUser = { ...user };
+          await UserModel.updateOne({ id: user.id }, { $set: safeUser }, { upsert: true });
+          db.users.set(user.id, safeUser);
           restoredUsersCount++;
         }
       }

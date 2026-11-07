@@ -4,7 +4,9 @@ Do not keep account passwords, PINs, API keys, database credentials, or setup to
 
 For local development, copy `server/.env.example` to `server/.env` and add only the values required for the services you use. The root `.gitignore` excludes `.env` files. Do not commit or share `.env`. Never place server credentials in `client/.env`; Vite exposes `VITE_*` variables to the browser.
 
-For production, provide secrets through the hosting platform's secret or environment-variable manager. Configure `MONGODB_URI`, `ADMIN_EMAIL`, a one-time `ADMIN_SETUP_TOKEN`, an HTTPS `APP_URL`, and working SMTP credentials for password reset delivery. Use a least-privilege MongoDB account. Remove the bootstrap token after initial provisioning.
+For production, provide secrets through the hosting platform's secret or environment-variable manager. Configure `MONGODB_URI`, `ADMIN_EMAIL`, an HTTPS `APP_URL`, and working email credentials for password reset delivery. Set a strong `ADMIN_PASSWORD` only when using first-login bootstrap: it is accepted only while MongoDB has no administrator, and the stored password is an Argon2id hash. Once an Admin exists, the database account is authoritative; changing environment credentials neither changes that account nor grants access. Remove `ADMIN_PASSWORD` after setup if it is not needed. If the sole Admin is intentionally deleted, bootstrap is available again only when valid `ADMIN_EMAIL` and `ADMIN_PASSWORD` values are configured. The optional CLI bootstrap instead requires a one-time `ADMIN_SETUP_TOKEN`; remove that token after CLI provisioning.
+
+Startup checks for multiple existing Admin accounts and stops rather than deleting, demoting, or choosing one. With at most one existing Admin, it creates the `unique_single_admin_by_role` MongoDB partial unique index, which prevents additional Admin records across application instances and insert paths. The backend's MongoDB user must have permission to inspect indexes and create or update indexes. If existing data contains multiple Admins, reconcile it manually before startup; the application does not modify user records to resolve that conflict.
 
 ## Production request security
 

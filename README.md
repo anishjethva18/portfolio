@@ -148,7 +148,17 @@ In production, set `APP_URL` to the public HTTPS origin and set `CORS_ALLOWED_OR
 
 ### 3. Create the first administrator
 
-MongoDB must be running and reachable before creating an administrator. The password is entered through a hidden PowerShell prompt, passed only to the one-time process environment, and removed afterward. Use your intended administrator email in place of `admin@example.com`.
+MongoDB must be running and reachable. Choose **one** of these methods. Both create the single administrator only when MongoDB has no Admin account.
+
+#### Option A: Bootstrap on the first Admin login
+
+Set `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` in the backend environment (`server/.env` locally, or the backend host's secret settings in production). Start the app and submit those credentials in the existing Admin login screen. The server stores an Argon2id password hash, never the plaintext password.
+
+This option is available only when there is no Admin in MongoDB. After the account is created, database credentials take precedence: changing either environment value does not change or bypass the existing account. You may remove `ADMIN_PASSWORD` after successful setup; to use first-login bootstrap again after an intentional Admin deletion, valid `ADMIN_EMAIL` and `ADMIN_PASSWORD` must be configured again. The active Admin cannot delete itself through the Admin Panel; use password recovery for account access issues. Production still requires `ADMIN_EMAIL` for startup.
+
+#### Option B: Run the one-time bootstrap script
+
+Use the script when you prefer to create the account before signing in. The password is entered through a hidden PowerShell prompt, passed only to the one-time process environment, and removed afterward. Replace `admin@example.com` with the intended administrator email.
 
 ```powershell
 $securePassword = Read-Host 'Admin password (at least 8 characters)' -AsSecureString
@@ -166,7 +176,7 @@ try {
 }
 ```
 
-The password is stored as an Argon2id hash, not as plain text. Production requires a password of at least 8 characters, `ADMIN_EMAIL`, HTTPS `APP_URL`, MongoDB, and a one-time `ADMIN_SETUP_TOKEN` supplied through the deployment secret manager. Production bootstrap can run only once and its email must match `ADMIN_EMAIL`. Remove the setup token from the deployment environment after provisioning.
+The script requires MongoDB and, in production, HTTPS `APP_URL`, matching `ADMIN_EMAIL`, and a one-time `ADMIN_SETUP_TOKEN`. Remove the setup token and one-off password from the trusted process environment after provisioning. Neither method creates a second Admin; existing Admins are not overwritten or demoted.
 
 ### 4. Start the app
 
@@ -220,8 +230,9 @@ Gemini-backed capabilities are enabled when `GEMINI_API_KEY` is configured; othe
 | `npm --prefix client run dev -- --port 5174`                                                              | Start the API and Vite at a chosen available port       |
 | `npm --prefix server run dev`                                                                             | Start the API with Vite middleware at `http://localhost:3000` |
 | `npm --prefix server start`                                                                               | Start the built production server                       |
-| `npm --prefix server run create-admin -- <email>`                                                         | Create the first admin using `PORTFOLIO_ADMIN_PASSWORD` |
-| `npm --prefix server run bootstrap:admin -- <email>`                                                      | Alias for the administrator bootstrap command           |
+| First Admin login | Create the first admin using backend `ADMIN_EMAIL` and `ADMIN_PASSWORD`, only when MongoDB has no Admin |
+| `npm --prefix server run create-admin -- <email>`                                                         | Create the first admin using a one-off password         |
+| `npm --prefix server run bootstrap:admin -- <email>`                                                      | Alias for the one-time administrator bootstrap script   |
 | `npm --prefix server test`                                                                                | Run backend integration tests                           |
 | `npm --prefix server run test:limitations`                                                                | Run backend limitation and security checks              |
 | `npm --prefix server run test:e2e`                                                                        | Run backend walkthrough tests                           |
@@ -249,7 +260,8 @@ All application APIs use the `/api` prefix. For endpoint details and access requ
 
 ## ☁️ Production checklist
 
-- [ ] Set `NODE_ENV=production`, MongoDB credentials, `ADMIN_EMAIL`, and a strong one-time `ADMIN_SETUP_TOKEN`.
+- [ ] Set `NODE_ENV=production`, MongoDB credentials, and `ADMIN_EMAIL`. Set a strong `ADMIN_PASSWORD` only if you intend to use first-login bootstrap; for the CLI script, use a one-time `ADMIN_SETUP_TOKEN` and one-off password instead.
+- [ ] Confirm the MongoDB `users` collection has the `unique_single_admin_by_role` partial unique index after startup. Startup fails safely if more than one Admin already exists; reconcile duplicates manually without deleting or demoting accounts automatically.
 - [ ] Serve the site over HTTPS and set the production `APP_URL`.
 - [ ] Configure production email credentials if password recovery or message replies are enabled.
 - [ ] Configure Gemini credentials only for enabled Gemini-backed features.

@@ -18,9 +18,80 @@ function minimumAdminPasswordLength(): number {
   return 8;
 }
 
+export class AdminBootstrapConfigurationError extends Error {
+  constructor() {
+    super('ADMIN_EMAIL and ADMIN_PASSWORD must be configured on the backend before first-admin login.');
+    this.name = 'AdminBootstrapConfigurationError';
+  }
+}
+
+export class AdminAccountIntegrityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminAccountIntegrityError';
+  }
+}
+
 export class AuthService {
   // In-memory brute-force protection map (email -> attempt record)
   private loginAttempts = new Map<string, LoginAttemptRecord>();
+  private adminConstraintClient: mongoose.mongo.MongoClient | null = null;
+  private adminConstraintPromise: Promise<void> | null = null;
+
+  public async ensureSingleAdminConstraint(): Promise<void> {
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('Authentication storage is unavailable. Please try again later.');
+    }
+
+    const client = mongoose.connection.getClient();
+    if (this.adminConstraintClient === client && this.adminConstraintPromise) {
+      return this.adminConstraintPromise;
+    }
+
+    this.adminConstraintClient = client;
+    this.adminConstraintPromise = (async () => {
+      const admins = await UserModel.find({ role: 'admin' })
+        .select('id')
+        .lean();
+      if (admins.length > 1) {
+        throw new AdminAccountIntegrityError(
+          'Multiple administrator accounts exist; manually resolve them before starting the server.',
+        );
+      }
+
+      const indexes = await UserModel.collection.indexes();
+      const legacyRoleIndex = indexes.find((index) =>
+        Object.keys(index.key).length === 1 &&
+        index.key.role === 1 &&
+        !index.unique &&
+        !index.partialFilterExpression,
+      );
+      if (legacyRoleIndex?.name) {
+        try {
+          await UserModel.collection.dropIndex(legacyRoleIndex.name);
+        } catch (error) {
+          if ((error as { code?: number }).code !== 27) throw error;
+        }
+      }
+
+      await UserModel.collection.createIndex(
+        { role: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { role: 'admin' },
+          name: 'unique_single_admin_by_role',
+        },
+      );
+    })().catch((error: unknown) => {
+      if (this.adminConstraintClient === client) {
+        this.adminConstraintClient = null;
+        this.adminConstraintPromise = null;
+      }
+      throw error;
+    });
+
+    return this.adminConstraintPromise;
+  }
 
   /**
    * Hash passwords with Argon2id using memory-hard production parameters.
@@ -103,12 +174,6 @@ export class AuthService {
     options?: { rememberMe?: boolean }
   ): Promise<{ user: Omit<User, 'passwordHash'>; sessionId: string; csrfToken: string; session: ActiveSession }> {
     const normalizedEmail = email.toLowerCase().trim();
-    const configuredAdminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
-
-    if (process.env.NODE_ENV === 'production' && configuredAdminEmail && normalizedEmail !== configuredAdminEmail) {
-      this.recordFailedLogin(normalizedEmail);
-      throw new Error('Invalid email or password');
-    }
 
     // 1. Check brute-force lockout
     const lockStatus = this.checkBruteForceLock(normalizedEmail);
@@ -123,8 +188,74 @@ export class AuthService {
     if (mongoose.connection.readyState !== 1) {
       throw new Error('Authentication storage is unavailable. Please try again later.');
     }
-    const mongoUser = await UserModel.findOne({ email: normalizedEmail, role: 'admin', disabled: { $ne: true } }).lean();
-    const user = mongoUser as User | null;
+    await this.ensureSingleAdminConstraint();
+    let user = await UserModel.findOne({ email: normalizedEmail, role: 'admin' }).lean() as User | null;
+    let authenticatedByBootstrap = false;
+
+    if (!user) {
+      const existingAdmin = await UserModel.exists({ role: 'admin' });
+      if (existingAdmin) {
+        this.recordFailedLogin(normalizedEmail);
+        throw new Error('Invalid email or password');
+      }
+
+      const configuredEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
+      const configuredPassword = process.env.ADMIN_PASSWORD;
+      if (
+        !configuredEmail ||
+        !configuredPassword ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configuredEmail) ||
+        configuredPassword.length < minimumAdminPasswordLength() ||
+        configuredPassword.length > 1024
+      ) {
+        throw new AdminBootstrapConfigurationError();
+      }
+
+      const expectedPassword = Buffer.from(configuredPassword);
+      const submittedPassword = Buffer.from(password);
+      const passwordMatches = expectedPassword.length === submittedPassword.length &&
+        crypto.timingSafeEqual(expectedPassword, submittedPassword);
+      if (normalizedEmail !== configuredEmail || !passwordMatches) {
+        this.recordFailedLogin(normalizedEmail);
+        throw new Error('Invalid email or password');
+      }
+
+      const now = new Date().toISOString();
+      const adminId = `usr_${crypto.randomUUID()}`;
+      const bootstrapAdmin = {
+        id: adminId,
+        email: configuredEmail,
+        passwordHash: await this.hashPassword(configuredPassword),
+        name: process.env.ADMIN_NAME?.trim() || 'Anish Jethva',
+        role: 'admin' as const,
+        disabled: false,
+        avatar: '/avatar.png',
+        bio: '',
+        createdAt: now,
+        updatedAt: now,
+        settings: {
+          theme: 'dark' as const,
+          wallpaper: 'bloom-dark',
+          soundEnabled: true,
+          accentColor: '#0078D4',
+        },
+      };
+
+      try {
+        await UserModel.create(bootstrapAdmin);
+        db.users.set(adminId, bootstrapAdmin);
+        user = bootstrapAdmin;
+        authenticatedByBootstrap = true;
+      } catch (error) {
+        if ((error as { code?: number })?.code !== 11000) throw error;
+        const winningAdmin = await UserModel.findOne({ role: 'admin', email: normalizedEmail }).lean() as User | null;
+        if (!winningAdmin || winningAdmin.disabled || !await this.comparePassword(password, winningAdmin.passwordHash)) {
+          this.recordFailedLogin(normalizedEmail);
+          throw new Error('Invalid email or password');
+        }
+        user = winningAdmin;
+      }
+    }
 
     if (!user || user.disabled) {
       this.recordFailedLogin(normalizedEmail);
@@ -132,7 +263,7 @@ export class AuthService {
     }
 
     // 3. Verify password
-    const isMatch = await this.comparePassword(password, user.passwordHash);
+    const isMatch = authenticatedByBootstrap || await this.comparePassword(password, user.passwordHash);
     if (!isMatch) {
       this.recordFailedLogin(normalizedEmail);
       throw new Error('Invalid email or password');
@@ -349,6 +480,7 @@ export class AuthService {
     if (mongoose.connection.readyState !== 1) {
       throw new Error('MongoDB is required to initialize the administrator.');
     }
+    await this.ensureSingleAdminConstraint();
     const minPasswordLength = minimumAdminPasswordLength();
     if (!email || !pass || pass.length < minPasswordLength || pass.length > 1024) {
       throw new Error(`A valid email and password of at least ${minPasswordLength} characters are required.`);
@@ -367,10 +499,8 @@ export class AuthService {
     if (config.isProduction && normalizedEmail !== config.adminEmail) {
       throw new Error('Administrator email must match ADMIN_EMAIL.');
     }
-    if (config.isProduction) {
-      const existingAdmin = await UserModel.exists({ role: 'admin' });
-      if (existingAdmin) throw new Error('Production administrator is already initialized.');
-    }
+    const existingAdmin = await UserModel.exists({ role: 'admin' });
+    if (existingAdmin) throw new Error('Administrator is already initialized.');
 
     const passwordHash = await this.hashPassword(pass);
     const adminUser: User = {
@@ -391,7 +521,7 @@ export class AuthService {
       },
     };
 
-    await UserModel.updateOne({ id: adminUser.id }, { $set: adminUser }, { upsert: true });
+    await UserModel.create(adminUser);
     db.users.set(adminUser.id, adminUser);
 
     const { passwordHash: _, ...safeAdmin } = adminUser;

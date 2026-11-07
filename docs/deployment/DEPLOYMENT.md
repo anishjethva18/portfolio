@@ -343,7 +343,7 @@ live email provider configuration.
 | `NODE_ENV` | Enables production security/config validation and secure cookies. | No | `production` |
 | `MONGODB_URI` | Atlas connection string; database name should be `portfolio`. | **Yes** | `mongodb+srv://<DB_USER>:<ENCODED_PASSWORD>@<CLUSTER_HOST>/portfolio?...` |
 | `APP_URL` | Canonical public site origin; production validation requires HTTPS. Also used for CORS/site links. | No | `https://<YOUR_SITE>.netlify.app` |
-| `ADMIN_EMAIL` | Email for the production administrator; bootstrap email must match it. | No | `<ADMIN_EMAIL>` |
+| `ADMIN_EMAIL` | Email for the production administrator; first-login and CLI bootstrap credentials must match it. Required for production startup. | No | `<ADMIN_EMAIL>` |
 | One email provider configuration | Production startup refuses to run with only the local/mock email provider. Choose one supported provider below. | Depends on provider | See email-specific variables |
 
 ### Optional Render variables and integrations
@@ -371,7 +371,8 @@ live email provider configuration.
 | `EMAIL_USER` | SMTP username/Gmail account; `SMTP_USER`, `GMAIL_USER`, `GOOGLE_OAUTH_EMAIL`, and `GOOGLE_EMAIL` are accepted alternatives. | Render | Usually no | `<SMTP_ACCOUNT>` |
 | `EMAIL_PASS` | SMTP password or Gmail App Password; `SMTP_PASS` is an alias. Never use a normal Google account password. | Render | **Yes** | `<SMTP_OR_APP_PASSWORD>` |
 | `ADMIN_SETUP_TOKEN` | Required by the production bootstrap script to create the first administrator. Remove/rotate after one-time setup if it is no longer needed. | Render and trusted one-off bootstrap environment | **Yes** | `<RANDOM_ONE_TIME_SETUP_TOKEN>` |
-| `PORTFOLIO_ADMIN_PASSWORD` | One-off bootstrap password input; minimum 8 characters. Do not leave it as a long-lived service variable. `ADMIN_PASSWORD` is an accepted alias. | Trusted one-off bootstrap environment | **Yes** | `<STRONG_UNIQUE_PASSWORD>` |
+| `ADMIN_PASSWORD` | Optional first-login bootstrap credential; minimum 8 characters. Used only when MongoDB has no Admin. Remove it after setup if you do not want bootstrap available after an intentional Admin deletion. | Render backend environment | **Yes** | `<STRONG_UNIQUE_PASSWORD>` |
+| `PORTFOLIO_ADMIN_PASSWORD` | One-off script bootstrap password input; minimum 8 characters. Do not leave it as a long-lived service variable. The script also accepts `ADMIN_PASSWORD`. | Trusted one-off bootstrap environment | **Yes** | `<STRONG_UNIQUE_PASSWORD>` |
 | `PORTFOLIO_ADMIN_EMAIL` | Optional bootstrap-script email input; `ADMIN_EMAIL` is the production canonical email and the created admin must match it. | Trusted one-off bootstrap environment | No | `<ADMIN_EMAIL>` |
 | `PORTFOLIO_ADMIN_NAME` | Optional display name for one-time bootstrap; `ADMIN_NAME` is an alias. | Trusted one-off bootstrap environment | No | `<ADMIN_DISPLAY_NAME>` |
 | `PORTFOLIO_STORAGE_DIR` | Overrides the private file-storage root. Use an attached persistent disk path or a durable storage integration; local instance storage is not durable across all hosting plans. | Render | No | `<PERSISTENT_MOUNT_PATH>/portfolio-storage` |
@@ -420,6 +421,8 @@ APP_URL=https://<YOUR_SITE>.netlify.app
 CORS_ALLOWED_ORIGINS=https://<YOUR_SITE>.netlify.app
 MONGODB_URI=mongodb+srv://<DB_USER>:<URL_ENCODED_PASSWORD>@<CLUSTER_HOST>/portfolio?retryWrites=true&w=majority
 ADMIN_EMAIL=<ADMIN_EMAIL>
+# Optional: set only if using first-login bootstrap when no Admin exists.
+# ADMIN_PASSWORD=<STRONG_UNIQUE_PASSWORD>
 
 # Choose one provider and configure its complete credentials.
 EMAIL_PROVIDER=resend
@@ -547,19 +550,31 @@ backend's email favicon, expose it temporarily through a public HTTPS tunnel:
   cookies remain on the site's origin. If calling the Render hostname
   directly, cross-origin cookie/CORS behavior is different and has not been
   validated by this deployment setup.
-- Production admin creation is a one-time bootstrap operation. The bootstrap
-  script requires `ADMIN_EMAIL`, the matching admin email, a configured
-  `ADMIN_SETUP_TOKEN`, and a one-off password of at least 8 characters.
-  `server/package.json` exposes `bootstrap:admin` and `create-admin`; the
-  script reads `PORTFOLIO_ADMIN_PASSWORD` or `ADMIN_PASSWORD`.
-- Run bootstrap only after Atlas and all production-required variables are
-  configured. Use a Render shell/one-off command only if the current plan
-  offers one; otherwise use a trusted operator environment connected to the
-  production database, entering secrets through a secure prompt rather than
-  committing them or putting them in a shared script. Remove the one-off
-  password from the process environment immediately and rotate/remove the
-  setup token when no longer needed. Never create or document a default
-  production password.
+- First-login bootstrap: when the MongoDB database contains no Admin, set
+  `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` in Render's backend environment,
+  deploy/restart, then sign in through the existing Admin login screen. The
+  backend creates one Admin and stores an Argon2id hash. After creation,
+  database credentials remain authoritative; environment changes do not
+  replace or bypass the account. Remove `ADMIN_PASSWORD` if you do not want
+  first-login bootstrap to become available after an intentional deletion.
+- Script bootstrap alternative: `server/package.json` exposes
+  `bootstrap:admin` and `create-admin`. The script requires `ADMIN_EMAIL`, a
+  matching email, a one-time `ADMIN_SETUP_TOKEN` in production, and a
+  one-off password of at least 8 characters. Run it only from a trusted
+  operator environment connected to the production database, enter the
+  password securely, then remove the one-off password from the process
+  environment and remove/rotate the setup token when no longer needed. Never
+  create or document a default production password.
+- Startup creates the MongoDB `unique_single_admin_by_role` partial unique
+  index after checking existing Admin records. It preserves an existing Admin
+  and fails startup if multiple Admins are found; it never deletes or demotes
+  accounts to resolve a conflict. The production database user must have
+  permission to create indexes. Verify the index in Atlas after startup.
+- If the sole Admin is intentionally deleted, either bootstrap method can be
+  used again only when its required, valid credentials are configured. Admin
+  self-deletion is blocked in the application; do not delete the live account
+  as a routine credential-recovery method. Use the existing password-reset
+  flow instead.
 - Password reset uses the configured email provider. Test the complete
   request/reset flow before go-live.
 

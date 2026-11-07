@@ -225,11 +225,9 @@ async function runTests() {
 
   // --- 2. Argon2id administrator authentication ---
   try {
-    const loginEmail = `login_test_${Date.now()}@test.local`;
-    const loginPass = 'LoginPass123!';
-    
-    // Register a fresh user first
-    const user = await createTestUser(loginEmail, loginPass, 'Login Tester', 'admin');
+    const loginEmail = testAdminEmail;
+    const loginPass = testAdminPass;
+    const user = testAdmin;
 
     const loginResult = await authService.login(loginEmail, loginPass);
     assert(
@@ -246,13 +244,10 @@ async function runTests() {
     }
     assert(wrongPassRejected, 'Invalid passwords strictly rejected (no bypass)');
 
-    const legacyEmail = `legacy_admin_${Date.now()}@test.local`;
-    const legacyPassword = 'LegacyAdminPassword123!';
-    const legacyUser = await createTestUser(legacyEmail, legacyPassword, 'Legacy Admin', 'admin');
-    const legacyHash = await bcrypt.hash(legacyPassword, 10);
-    await UserModel.updateOne({ id: legacyUser.id }, { $set: { passwordHash: legacyHash } });
-    const migratedLogin = await authService.login(legacyEmail, legacyPassword);
-    const migratedUser = await UserModel.findOne({ id: legacyUser.id }).select('passwordHash').lean();
+    const legacyHash = await bcrypt.hash(loginPass, 10);
+    await UserModel.updateOne({ id: testAdminUserId }, { $set: { passwordHash: legacyHash } });
+    const migratedLogin = await authService.login(loginEmail, loginPass);
+    const migratedUser = await UserModel.findOne({ id: testAdminUserId }).select('passwordHash').lean();
     assert(Boolean(migratedLogin.sessionId && migratedUser?.passwordHash.startsWith('$argon2id$')), 'Legacy bcrypt password is re-hashed to Argon2id after valid login');
 
     const authApp = express();
@@ -264,13 +259,9 @@ async function runTests() {
     try {
       await withRestoredEnvironment(async () => {
         process.env.NODE_ENV = 'production';
-        let additionalAdminRejected = false;
-        try {
-          await authService.login(legacyEmail, legacyPassword);
-        } catch {
-          additionalAdminRejected = true;
-        }
-        assert(additionalAdminRejected, 'Production login rejects legacy administrators outside ADMIN_EMAIL');
+        const existingAdminLogin = await authService.login(loginEmail, loginPass);
+        assert(Boolean(existingAdminLogin.sessionId), 'Production login authenticates existing administrators from database credentials even when ADMIN_EMAIL changes');
+        await sessionService.revokeSession(existingAdminLogin.sessionId);
         const response = await fetch(`http://127.0.0.1:${authPort}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1539,10 +1530,9 @@ async function runTests() {
   // --- 25. Security Role Enforcement, Direct API Access & Storage Resilience ---
   try {
     const stdUser: any = { id: 'usr_std_123', email: 'user@test.local', role: 'user', name: 'stduser', passwordHash: 'hash', createdAt: new Date().toISOString() };
-    const adminUser: any = { id: 'usr_admin_123', email: 'admin@test.local', role: 'admin', name: 'adminuser', passwordHash: 'hash', createdAt: new Date().toISOString() };
+    const adminUser: any = { id: testAdminUserId, email: testAdminEmail, role: 'admin', name: 'Test Admin' };
 
     await UserModel.updateOne({ id: stdUser.id }, { $set: stdUser }, { upsert: true });
-    await UserModel.updateOne({ id: adminUser.id }, { $set: adminUser }, { upsert: true });
 
     const stdSession = await sessionService.createSession(stdUser);
     const adminSession = await sessionService.createSession(adminUser);
@@ -1793,33 +1783,32 @@ async function runTests() {
           role: 'user',
         }),
       });
+      const managedUser = await createTestUser(`managed_${Date.now()}@test.local`, 'InitialManagedPass123!', 'Managed Test User');
+      const managedUserId = managedUser.id;
       const createdManagedUser = await fetch(userManagementUrl, {
         method: 'POST',
         headers: adminMutationHeaders,
         body: JSON.stringify({
-          name: 'Managed Test User',
-          email: `managed_${Date.now()}@test.local`,
+          name: 'Blocked Additional Admin',
+          email: `managed_admin_${Date.now()}@test.local`,
           password: 'Admin123',
         }),
       });
-      const managedUserPayload: any = await createdManagedUser.json();
-      const managedUserId = managedUserPayload.user?.id;
-      const managedUserModel = managedUserId ? await UserModel.findOne({ id: managedUserId }).lean() : null;
-      const promoteManagedUser = managedUserId ? await fetch(`${userManagementUrl}/${managedUserId}/role`, {
+      const promoteManagedUser = await fetch(`${userManagementUrl}/${managedUserId}/role`, {
         method: 'PUT',
         headers: adminMutationHeaders,
         body: JSON.stringify({ role: 'admin' }),
-      }) : null;
-      const promotedManagedUser = managedUserId ? await UserModel.findOne({ id: managedUserId }).select('role').lean() : null;
-      const deleteManagedUser = managedUserId ? await fetch(`${userManagementUrl}/${managedUserId}`, {
+      });
+      const promotedManagedUser = await UserModel.findOne({ id: managedUserId }).select('role').lean();
+      const deleteManagedUser = await fetch(`${userManagementUrl}/${managedUserId}`, {
         method: 'DELETE',
         headers: { Cookie: `sid=${adminSession.sessionId}`, 'X-CSRF-Token': adminSession.csrfToken },
-      }) : null;
-      assert(createdManagedUser.status === 201 && managedUserModel?.role === 'admin' && managedUserPayload.user?.passwordHash === undefined, 'Admin can create a persistent administrator account without exposing its password hash');
-      assert(shortManagedUser.status === 422, 'Admin account creation rejects passwords shorter than 8 characters');
-      assert(createUserRole.status === 422, 'User management rejects creation of non-administrator accounts');
-      assert(promoteManagedUser?.ok === true && promotedManagedUser?.role === 'admin', 'User management preserves the administrator role for managed accounts');
-      assert(deleteManagedUser?.status === 200 && !(await UserModel.exists({ id: managedUserId })), 'Admin can delete a managed account and revoke its sessions');
+      });
+      assert(createdManagedUser.status === 409, 'Admin account creation cannot add another administrator');
+      assert(shortManagedUser.status === 409, 'Admin account creation remains disabled for short passwords');
+      assert(createUserRole.status === 409, 'User management cannot create additional accounts');
+      assert(promoteManagedUser.status === 409 && promotedManagedUser?.role === 'user', 'User management cannot promote another administrator');
+      assert(deleteManagedUser.status === 200 && !(await UserModel.exists({ id: managedUserId })), 'Admin can delete a managed user account and revoke its sessions');
 
       const projectEndpoint = `http://127.0.0.1:${adminApiPort}/api/admin/projects`;
       const originalProjectDraft = await AdminProjectDraftModel.findOne({ key: 'primary_portfolio_projects' }).lean();
@@ -2030,16 +2019,15 @@ async function runTests() {
       );
       assert(!JSON.stringify(contentStudioPayload).includes('adminPinHash') && !('securitySettings' in contentStudioPayload.draft), 'Content studio response excludes private security fields');
       assert(missingCsrf.status === 403, 'Admin state changes require a valid CSRF token');
-      assert(secondAdminPromotion.ok && promotedUser?.role === 'admin', 'Administrator can promote an existing account to admin');
+      assert(secondAdminPromotion.status === 409 && promotedUser?.role === 'user', 'Administrator cannot promote another account to admin');
       assert(activeAdminRoleChange.status === 403, 'Active administrator cannot demote their own account');
       assert(restorePromotedUser.status === 400, 'Administrator accounts cannot be demoted to a user role');
       assert(
-        roleMigrationResponse.ok &&
-          roleMigrationPayload.success &&
-          roleMigrationPayload.migratedCount > 0 &&
-          migratedLegacyUser?.role === 'admin' &&
-          (await sessionService.validateSession(legacySession.sessionId)) === null,
-        'Legacy user accounts are converted to administrators and their old sessions are revoked',
+        roleMigrationResponse.status === 409 &&
+          roleMigrationPayload.success === false &&
+          migratedLegacyUser?.role === 'user' &&
+          (await sessionService.validateSession(legacySession.sessionId)) !== null,
+        'Legacy user migration cannot create another administrator or revoke the user session',
       );
       await UserModel.deleteOne({ id: legacyUser.id });
 
@@ -2212,9 +2200,9 @@ async function runTests() {
   try {
     const disabledEmail = `disabled_${Date.now()}@example.com`;
     const disabledPassword = 'DisabledUserPass123!';
-    const user = await createTestUser(disabledEmail, disabledPassword, 'Disabled User', 'admin');
+    const user = await createTestUser(disabledEmail, disabledPassword, 'Disabled User');
 
-    const existingSession = await sessionService.createSession({ id: user.id, email: user.email, role: 'admin' });
+    const existingSession = await sessionService.createSession({ id: user.id, email: user.email, role: 'user' });
 
     user.disabled = true;
     db.users.set(user.id, user);

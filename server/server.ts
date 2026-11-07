@@ -33,6 +33,7 @@ import { contentStudioRouter } from './routes/contentStudio';
 import { socialPreviewRouter } from './routes/socialPreview';
 import { getPublishedSocialImageInfo, getPublishedSocialMediaId, getSocialPreviewPath } from './services/publishedSocialImageService';
 import { widgetsRouter } from './routes/widgets';
+import { AdminAccountIntegrityError, authService } from './services/authService';
 import { fileService } from './services/fileService';
 import { getPublicSkillCategories } from './services/skillCatalog';
 import { getEmailConfig } from './config/emailConfig';
@@ -107,6 +108,7 @@ async function startServer() {
     await ensureApplicationCollections();
     await retainAnalyticsUntilReset();
     await db.initMongoSync();
+    await authService.ensureSingleAdminConstraint();
     const recoveredPortfolioMedia = await fileService.restorePortfolioMediaIndex();
     const persistedPortfolioMedia = await fileService.persistPortfolioMediaContent();
     console.log(`[Database Engine] MongoDB Mongoose Active (${connInfo.isMemoryServer ? 'Embedded Instance' : 'Connected URI'})`);
@@ -116,8 +118,12 @@ async function startServer() {
     if (persistedPortfolioMedia > 0) {
       console.log(`[FileService] Portfolio media copied into MongoDB for durable serving: ${persistedPortfolioMedia} file(s).`);
     }
-  } catch {
-    console.error('[Database Engine] Required MongoDB persistence is unavailable; server startup aborted.');
+  } catch (error) {
+    if (error instanceof AdminAccountIntegrityError) {
+      console.error(`[Auth] ${error.message}`);
+    } else {
+      console.error('[Database Engine] Required MongoDB persistence is unavailable; server startup aborted.');
+    }
     throw new Error('Required MongoDB persistence is unavailable.');
   }
 

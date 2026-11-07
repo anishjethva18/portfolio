@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authService } from '../services/authService';
+import { AdminBootstrapConfigurationError, authService } from '../services/authService';
 import { sessionService, SESSION_DURATION_MS } from '../services/sessionService';
 import { requireAuth, requireAdmin, validateCsrf, AuthenticatedRequest, extractSessionId } from '../middleware/auth';
 import { createRateLimiter } from '../middleware/security';
@@ -85,8 +85,17 @@ authRouter.post('/login', authRateLimiter, async (req: AuthenticatedRequest, res
       csrfToken: result.csrfToken,
       message: 'Logged in successfully',
     });
-  } catch (error: any) {
-    res.status(401).json({ success: false, error: error.message || 'Invalid email or password' });
+  } catch (error: unknown) {
+    const bootstrapNotConfigured = error instanceof AdminBootstrapConfigurationError;
+    if (bootstrapNotConfigured) {
+      console.error('[Auth] First-admin login is unavailable: configure ADMIN_EMAIL and ADMIN_PASSWORD on the backend.');
+    } else {
+      console.error('[Auth] Login failed because authentication could not be completed.');
+    }
+    res.status(bootstrapNotConfigured ? 503 : 401).json({
+      success: false,
+      error: 'Invalid email or password',
+    });
   }
 });
 
